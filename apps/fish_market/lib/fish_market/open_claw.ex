@@ -87,6 +87,18 @@ defmodule FishMarket.OpenClaw do
     Phoenix.PubSub.unsubscribe(@pubsub, session_topic(session_key))
   end
 
+  @spec broadcast_local_user_message(String.t(), map()) :: :ok
+  def broadcast_local_user_message(session_key, payload)
+      when is_binary(session_key) and is_map(payload) do
+    message =
+      {:openclaw_local_user_message,
+       payload
+       |> Map.put_new("sessionKey", session_key)
+       |> Map.put_new(:sessionKey, session_key)}
+
+    Phoenix.PubSub.broadcast(@pubsub, session_topic(session_key), message)
+  end
+
   @spec broadcast_gateway(atom(), term()) :: :ok
   def broadcast_gateway(event, payload) when is_atom(event) do
     message = {:openclaw_gateway, event, payload}

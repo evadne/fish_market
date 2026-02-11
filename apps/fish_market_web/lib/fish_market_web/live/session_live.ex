@@ -123,10 +123,17 @@ defmodule FishMarketWeb.SessionLive do
         else
           case validate_selected_session_for_send(selected_session_key) do
             :ok ->
-              socket = append_local_user_message(socket, message)
+              run_id = OpenClaw.idempotency_key()
 
-              case OpenClaw.chat_send(selected_session_key, message) do
+              case OpenClaw.chat_send(selected_session_key, message, %{idempotency_key: run_id}) do
                 {:ok, _payload} ->
+                  OpenClaw.broadcast_local_user_message(selected_session_key, %{
+                    "sessionKey" => selected_session_key,
+                    "runId" => run_id,
+                    "message" => message,
+                    "timestamp" => System.system_time(:millisecond)
+                  })
+
                   {:noreply,
                    socket
                    |> clear_compose()
@@ -256,6 +263,11 @@ defmodule FishMarketWeb.SessionLive do
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
     {:noreply,
      socket |> assign(:history_error, "Gateway disconnected") |> sync_no_messages_state()}
+  end
+
+  @impl true
+  def handle_info({:openclaw_local_user_message, payload}, socket) do
+    {:noreply, socket |> apply_local_user_message(payload) |> sync_no_messages_state()}
   end
 
   @impl true
@@ -678,6 +690,39 @@ defmodule FishMarketWeb.SessionLive do
 
     insert_history_message(socket, item)
   end
+
+  defp apply_local_user_message(socket, payload) when is_map(payload) do
+    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
+    text = map_string(payload, "message") || map_string(payload, :message)
+    run_id = map_string(payload, "runId") || map_string(payload, :runId)
+    timestamp_ms = map_get(payload, "timestamp") || map_get(payload, :timestamp)
+
+    cond do
+      socket.assigns.selected_session_key != session_key ->
+        socket
+
+      not is_binary(text) ->
+        socket
+
+      true ->
+        message_id =
+          if is_binary(run_id) do
+            "local-user-#{run_id}"
+          else
+            "local-user-#{System.unique_integer([:positive, :monotonic])}"
+          end
+
+        upsert_history_message(socket, %{
+          id: message_id,
+          role: "user",
+          text: text,
+          timestamp_label: format_timestamp_label(timestamp_ms),
+          trace?: false
+        })
+    end
+  end
+
+  defp apply_local_user_message(socket, _payload), do: socket
 
   defp apply_chat_event(socket, payload) when is_map(payload) do
     session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
