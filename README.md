@@ -2,6 +2,8 @@
 
 This is a WIP Elixir/Phoenix application acting as a front-end to OpenClaw.
 
+![./docs/fish.png](fish)
+
 ## Configuration
 
 The application should be run with the following envars:

@@ -26,12 +26,6 @@ defmodule FishMarketWeb.MenuLive do
   end
 
   @impl true
-  def handle_event("select-session", %{"key" => session_key}, socket) do
-    OpenClaw.broadcast_selection(session_key)
-    {:noreply, select_session(socket, session_key)}
-  end
-
-  @impl true
   def handle_info(:load_sessions, socket) do
     {:noreply, load_sessions(socket)}
   end
@@ -166,12 +160,10 @@ defmodule FishMarketWeb.MenuLive do
               No active sessions yet.
             </div>
 
-            <button
+            <.link
               :for={session <- @sessions}
-              type="button"
               id={"menu-session-" <> session_dom_id(session_key(session))}
-              phx-click="select-session"
-              phx-value-key={session_key(session)}
+              navigate={session_path(session_key(session))}
               class={[
                 "group flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm font-medium active:border-gray-600",
                 @selected_session_key == session_key(session) && "bg-gray-700/75 text-white",
@@ -199,7 +191,7 @@ defmodule FishMarketWeb.MenuLive do
                   new
                 </span>
               </span>
-            </button>
+            </.link>
           </nav>
         </div>
       </div>
@@ -331,6 +323,9 @@ defmodule FishMarketWeb.MenuLive do
     |> :erlang.phash2()
     |> Integer.to_string()
   end
+
+  defp session_path(session_key) when is_binary(session_key), do: ~p"/#{session_key}"
+  defp session_path(_session_key), do: ~p"/"
 
   defp updated_at(session) do
     map_integer(session, "updatedAt")
