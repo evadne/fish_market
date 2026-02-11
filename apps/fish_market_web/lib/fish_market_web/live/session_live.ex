@@ -275,13 +275,6 @@ defmodule FishMarketWeb.SessionLive do
         </div>
 
         <div class="flex items-center gap-2">
-          <div
-            id="active-session-badge"
-            class="inline-flex max-w-64 items-center truncate rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-          >
-            {active_session_label(@selected_session_key)}
-          </div>
-
           <button
             id="header-new-session-button"
             type="button"
@@ -321,14 +314,15 @@ defmodule FishMarketWeb.SessionLive do
                 type="button"
                 phx-click="toggle-traces"
                 class={[
-                  "inline-flex h-8 items-center justify-center rounded-lg border px-3 text-xs font-semibold",
+                  "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold",
                   @show_traces? &&
                     "border-purple-700 bg-purple-700 text-purple-50 hover:border-purple-600 hover:bg-purple-600",
                   not @show_traces? &&
                     "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-gray-500 dark:hover:bg-gray-800"
                 ]}
               >
-                {if @show_traces?, do: "Hide Traces", else: "Show Traces"}
+                <.icon name="hero-information-circle-mini" class="size-4" />
+                <span>Traces</span>
               </button>
             </div>
           </div>
@@ -910,9 +904,6 @@ defmodule FishMarketWeb.SessionLive do
       do: socket,
       else: assign(socket, :send_error, format_reason(error_reason))
   end
-
-  defp active_session_label(nil), do: "No session selected"
-  defp active_session_label(session_key), do: session_key
 
   defp session_subtitle(nil, _loading?, _error, _pending_session_key),
     do: "Pick a session from the menu to inspect history."

@@ -119,7 +119,7 @@ defmodule FishMarketWeb.MenuLive do
             name="hero-cube-transparent-mini"
             class="size-5 text-purple-400 transition group-hover:scale-110"
           />
-          <span>Company</span>
+          <span>Fish Market</span>
         </.link>
 
         <div class="flex items-center gap-2 lg:hidden">
