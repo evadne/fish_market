@@ -9,6 +9,8 @@ defmodule FishMarketWeb.SessionLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    show_traces? = initial_show_traces_preference(socket)
+
     socket =
       socket
       |> assign(:selected_session_key, nil)
@@ -17,7 +19,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:history_error, nil)
       |> assign(:send_error, nil)
       |> assign(:can_send_message?, false)
-      |> assign(:show_traces?, false)
+      |> assign(:show_traces?, show_traces?)
       |> assign(:show_no_messages_state?, false)
       |> assign(:history_messages, [])
       |> assign(:assistant_pending?, false)
@@ -116,7 +118,9 @@ defmodule FishMarketWeb.SessionLive do
     {:noreply,
      socket
      |> assign(:show_traces?, show_traces?)
-     |> stream(:messages, visible_messages, reset: true)}
+     |> stream(:messages, visible_messages, reset: true)
+     |> sync_no_messages_state()
+     |> push_event("set-show-traces", %{enabled: show_traces?})}
   end
 
   @impl true
@@ -995,6 +999,22 @@ defmodule FishMarketWeb.SessionLive do
       not assistant_pending? and
       not (is_binary(streaming_text) and streaming_text != "")
   end
+
+  defp initial_show_traces_preference(socket) do
+    if connected?(socket) do
+      socket
+      |> get_connect_params()
+      |> parse_show_traces_preference()
+    else
+      false
+    end
+  end
+
+  defp parse_show_traces_preference(%{"show_traces" => value})
+       when value in [true, "true", "1"],
+       do: true
+
+  defp parse_show_traces_preference(_params), do: false
 
   defp sync_no_messages_state(socket) do
     assign(

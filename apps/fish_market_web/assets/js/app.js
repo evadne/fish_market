@@ -26,6 +26,8 @@ import {hooks as colocatedHooks} from "phoenix-colocated/fish_market_web"
 import topbar from "../vendor/topbar"
 
 const darkModeStorageKey = "tailkit-dark-mode"
+const showTracesCookieKey = "fish_market_show_traces"
+const showTracesCookieMaxAge = 60 * 60 * 24 * 365
 const systemColorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
 
 const normalizeDarkMode = (mode) => {
@@ -52,6 +54,33 @@ const persistDarkMode = (mode) => {
   }
 
   applyDarkMode(normalizedMode)
+}
+
+const readCookie = (name) => {
+  const encodedName = encodeURIComponent(name)
+  const prefix = `${encodedName}=`
+  const cookies = document.cookie ? document.cookie.split(";") : []
+
+  for (const chunk of cookies) {
+    const trimmed = chunk.trim()
+
+    if (trimmed.startsWith(prefix)) {
+      return decodeURIComponent(trimmed.slice(prefix.length))
+    }
+  }
+
+  return null
+}
+
+const readShowTracesPreference = () => {
+  const value = readCookie(showTracesCookieKey)
+  return value === "1" || value === "true"
+}
+
+const persistShowTracesPreference = (enabled) => {
+  const value = enabled ? "1" : "0"
+  document.cookie =
+    `${showTracesCookieKey}=${value}; Path=/; Max-Age=${showTracesCookieMaxAge}; SameSite=Lax`
 }
 
 applyDarkMode(localStorage.getItem(darkModeStorageKey) || "system")
@@ -90,6 +119,10 @@ window.addEventListener("phx:chat-input-focus", (event) => {
   if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return
 
   input.focus()
+})
+
+window.addEventListener("phx:set-show-traces", (event) => {
+  persistShowTracesPreference(Boolean(event.detail?.enabled))
 })
 
 const syncSystemDarkMode = () => {
@@ -250,7 +283,10 @@ const AutoScrollMessages = {
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
-  params: {_csrf_token: csrfToken},
+  params: () => ({
+    _csrf_token: csrfToken,
+    show_traces: readShowTracesPreference(),
+  }),
   hooks: {...colocatedHooks, AutoScrollMessages},
 })
 
