@@ -266,7 +266,7 @@ const AutoScrollMessages = {
 
   updated() {
     if (!this.shouldStickToBottom) return
-    requestAnimationFrame(() => this.scrollToBottom())
+    this.scrollToBottom()
   },
 
   destroyed() {
@@ -287,8 +287,26 @@ const AutoScrollMessages = {
 const ChatComposer = {
   mounted() {
     this.isComposing = false
+    this.isFocused = false
+    this.stickToBottomWhileComposing = true
+    this.bottomThreshold = 96
     this.maxRows = 10
+    this.messagesWrapper = () => document.getElementById("session-messages-wrapper")
+    this.isWrapperNearBottom = () => {
+      const wrapper = this.messagesWrapper()
+      if (!(wrapper instanceof HTMLElement)) return false
+      const distance = wrapper.scrollHeight - wrapper.scrollTop - wrapper.clientHeight
+      return distance <= this.bottomThreshold
+    }
+    this.scrollWrapperToBottom = () => {
+      const wrapper = this.messagesWrapper()
+      if (!(wrapper instanceof HTMLElement)) return
+      wrapper.scrollTop = wrapper.scrollHeight
+    }
     this.resizeComposer = () => {
+      const shouldAnchorBottom =
+        this.isFocused && (this.stickToBottomWhileComposing || this.isWrapperNearBottom())
+
       const computed = window.getComputedStyle(this.el)
       const lineHeight = Number.parseFloat(computed.lineHeight) || 20
       const verticalPadding =
@@ -302,6 +320,10 @@ const ChatComposer = {
       const nextHeight = Math.min(this.el.scrollHeight, maxHeight)
       this.el.style.height = `${nextHeight}px`
       this.el.style.overflowY = this.el.scrollHeight > maxHeight ? "auto" : "hidden"
+
+      if (shouldAnchorBottom) {
+        this.scrollWrapperToBottom()
+      }
     }
     this.handleCompositionStart = () => {
       this.isComposing = true
@@ -323,6 +345,18 @@ const ChatComposer = {
     this.handleInput = () => {
       this.resizeComposer()
     }
+    this.handleFocus = () => {
+      this.isFocused = true
+      this.stickToBottomWhileComposing = this.isWrapperNearBottom()
+      this.resizeComposer()
+    }
+    this.handleBlur = () => {
+      this.isFocused = false
+    }
+    this.handleMessagesScroll = () => {
+      if (!this.isFocused) return
+      this.stickToBottomWhileComposing = this.isWrapperNearBottom()
+    }
     this.handleWindowResize = () => {
       this.resizeComposer()
     }
@@ -331,7 +365,13 @@ const ChatComposer = {
     this.el.addEventListener("compositionend", this.handleCompositionEnd)
     this.el.addEventListener("keydown", this.handleKeyDown)
     this.el.addEventListener("input", this.handleInput)
+    this.el.addEventListener("focus", this.handleFocus)
+    this.el.addEventListener("blur", this.handleBlur)
     window.addEventListener("resize", this.handleWindowResize)
+    const wrapper = this.messagesWrapper()
+    if (wrapper instanceof HTMLElement) {
+      wrapper.addEventListener("scroll", this.handleMessagesScroll, {passive: true})
+    }
     requestAnimationFrame(() => this.resizeComposer())
   },
 
@@ -344,7 +384,13 @@ const ChatComposer = {
     this.el.removeEventListener("compositionend", this.handleCompositionEnd)
     this.el.removeEventListener("keydown", this.handleKeyDown)
     this.el.removeEventListener("input", this.handleInput)
+    this.el.removeEventListener("focus", this.handleFocus)
+    this.el.removeEventListener("blur", this.handleBlur)
     window.removeEventListener("resize", this.handleWindowResize)
+    const wrapper = this.messagesWrapper()
+    if (wrapper instanceof HTMLElement) {
+      wrapper.removeEventListener("scroll", this.handleMessagesScroll)
+    }
   },
 }
 
