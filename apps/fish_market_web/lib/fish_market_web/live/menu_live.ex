@@ -6,13 +6,15 @@ defmodule FishMarketWeb.MenuLive do
   @refresh_states MapSet.new(["final", "aborted", "error"])
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    selected_session_key = initial_selected_session_key(session)
+
     socket =
       socket
       |> assign(:sessions, [])
       |> assign(:sessions_loading?, false)
       |> assign(:sessions_error, nil)
-      |> assign(:selected_session_key, nil)
+      |> assign(:selected_session_key, selected_session_key)
       |> assign(:unread_session_keys, MapSet.new())
 
     if connected?(socket) do
@@ -59,7 +61,7 @@ defmodule FishMarketWeb.MenuLive do
 
   @impl true
   def handle_info({:openclaw_ui, :select_session, _session_key}, socket) do
-    {:noreply, socket}
+    {:noreply, assign(socket, :selected_session_key, nil)}
   end
 
   @impl true
@@ -105,7 +107,7 @@ defmodule FishMarketWeb.MenuLive do
     >
       <div class="flex h-16 w-full flex-none items-center justify-between bg-gray-600/25 px-4 lg:justify-center">
         <.link
-          navigate={~p"/"}
+          patch={~p"/"}
           id="menu-brand-link"
           class="group inline-flex items-center gap-2 text-lg font-bold tracking-wide text-gray-100 hover:text-gray-300"
         >
@@ -163,7 +165,7 @@ defmodule FishMarketWeb.MenuLive do
             <.link
               :for={session <- @sessions}
               id={"menu-session-" <> session_dom_id(session_key(session))}
-              navigate={session_path(session_key(session))}
+              patch={session_path(session_key(session))}
               class={[
                 "group flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm font-medium active:border-gray-600",
                 @selected_session_key == session_key(session) && "bg-gray-700/75 text-white",
@@ -277,9 +279,7 @@ defmodule FishMarketWeb.MenuLive do
        when is_binary(previous_selected),
        do: previous_selected
 
-  defp resolve_selected_session_key(sessions, _previous) do
-    sessions |> List.first() |> session_key()
-  end
+  defp resolve_selected_session_key(_sessions, _previous), do: nil
 
   defp prune_unread_sessions(socket, sessions) do
     valid_keys =
@@ -324,8 +324,15 @@ defmodule FishMarketWeb.MenuLive do
     |> Integer.to_string()
   end
 
-  defp session_path(session_key) when is_binary(session_key), do: ~p"/#{session_key}"
+  defp session_path(session_key) when is_binary(session_key), do: ~p"/session/#{session_key}"
   defp session_path(_session_key), do: ~p"/"
+
+  defp initial_selected_session_key(%{"selected_session_key" => session_key})
+       when is_binary(session_key) and session_key != "" do
+    session_key
+  end
+
+  defp initial_selected_session_key(_session), do: nil
 
   defp updated_at(session) do
     map_integer(session, "updatedAt")

@@ -8,12 +8,13 @@ defmodule FishMarketWeb.SessionLive do
   @tool_trace_text_limit 12_000
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    selected_session_key = initial_selected_session_key(session)
     show_traces? = initial_show_traces_preference(socket)
 
     socket =
       socket
-      |> assign(:selected_session_key, nil)
+      |> assign(:selected_session_key, selected_session_key)
       |> assign(:history_loading?, false)
       |> assign(:history_request_id, nil)
       |> assign(:history_error, nil)
@@ -32,10 +33,21 @@ defmodule FishMarketWeb.SessionLive do
       |> stream(:messages, [])
       |> sync_no_messages_state()
 
-    if connected?(socket) do
-      OpenClaw.subscribe_gateway()
-      OpenClaw.subscribe_selection()
-    end
+    socket =
+      if connected?(socket) do
+        OpenClaw.subscribe_gateway()
+        OpenClaw.subscribe_selection()
+
+        if is_binary(selected_session_key) do
+          socket
+          |> ensure_session_subscription(selected_session_key)
+          |> request_history_load(selected_session_key)
+        else
+          socket
+        end
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -143,6 +155,26 @@ defmodule FishMarketWeb.SessionLive do
        |> ensure_session_subscription(session_key)
        |> request_history_load(session_key)}
     end
+  end
+
+  @impl true
+  def handle_info({:openclaw_ui, :select_session, _session_key}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_session_key, nil)
+     |> assign(:send_error, nil)
+     |> assign(:can_send_message?, false)
+     |> assign(:history_messages, [])
+     |> assign(:history_request_id, nil)
+     |> assign(:history_loading?, false)
+     |> assign(:history_error, nil)
+     |> reset_streaming_state()
+     |> assign(:pending_session_key, nil)
+     |> assign(:queued_messages, [])
+     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
+     |> stream(:messages, [], reset: true)
+     |> ensure_session_subscription(nil)
+     |> sync_no_messages_state()}
   end
 
   @impl true
@@ -1006,6 +1038,13 @@ defmodule FishMarketWeb.SessionLive do
        do: true
 
   defp parse_show_traces_preference(_params), do: false
+
+  defp initial_selected_session_key(%{"selected_session_key" => session_key})
+       when is_binary(session_key) and session_key != "" do
+    session_key
+  end
+
+  defp initial_selected_session_key(_session), do: nil
 
   defp sync_no_messages_state(socket) do
     assign(

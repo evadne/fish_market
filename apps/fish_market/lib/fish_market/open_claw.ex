@@ -93,8 +93,8 @@ defmodule FishMarket.OpenClaw do
     Phoenix.PubSub.subscribe(@pubsub, @selection_topic)
   end
 
-  @spec broadcast_selection(String.t()) :: :ok
-  def broadcast_selection(session_key) when is_binary(session_key) do
+  @spec broadcast_selection(String.t() | nil) :: :ok
+  def broadcast_selection(session_key) when is_binary(session_key) or is_nil(session_key) do
     Phoenix.PubSub.broadcast(
       @pubsub,
       @selection_topic,

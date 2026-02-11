@@ -4,8 +4,13 @@ defmodule FishMarketWeb.ApplicationLive do
   alias FishMarket.OpenClaw
 
   @impl true
-  def mount(_params, _session, socket) do
-    socket = assign(socket, :selected_session_key, nil)
+  def mount(params, _session, socket) do
+    selected_session_key = normalize_session_key(params)
+
+    socket =
+      socket
+      |> assign(:initial_selected_session_key, selected_session_key)
+      |> assign(:selected_session_key, selected_session_key)
 
     if connected?(socket) do
       OpenClaw.subscribe_selection()
@@ -19,9 +24,7 @@ defmodule FishMarketWeb.ApplicationLive do
     session_key = normalize_session_key(params)
     socket = assign(socket, :selected_session_key, session_key)
 
-    if is_binary(session_key) do
-      OpenClaw.broadcast_selection(session_key)
-    end
+    OpenClaw.broadcast_selection(session_key)
 
     {:noreply, socket}
   end
@@ -38,7 +41,11 @@ defmodule FishMarketWeb.ApplicationLive do
 
   @impl true
   def handle_info({:openclaw_ui, :select_session, _session_key}, socket) do
-    {:noreply, socket}
+    if is_nil(socket.assigns.selected_session_key) do
+      {:noreply, socket}
+    else
+      {:noreply, push_patch(socket, to: ~p"/")}
+    end
   end
 
   @impl true
@@ -50,7 +57,11 @@ defmodule FishMarketWeb.ApplicationLive do
           id="page-container"
           class="mx-auto flex min-h-dvh w-full min-w-80 flex-col bg-gray-100 lg:pl-64 dark:bg-gray-900 dark:text-gray-100"
         >
-          {live_render(@socket, FishMarketWeb.MenuLive, id: "menu-live")}
+          {live_render(@socket, FishMarketWeb.MenuLive,
+            id: "menu-live",
+            sticky: true,
+            session: %{"selected_session_key" => @initial_selected_session_key}
+          )}
 
           <button
             id="page-overlay"
@@ -61,7 +72,10 @@ defmodule FishMarketWeb.ApplicationLive do
           >
           </button>
 
-          {live_render(@socket, FishMarketWeb.SessionLive, id: "session-live")}
+          {live_render(@socket, FishMarketWeb.SessionLive,
+            id: "session-live",
+            session: %{"selected_session_key" => @initial_selected_session_key}
+          )}
         </div>
       </div>
     </Layouts.app>
@@ -70,10 +84,10 @@ defmodule FishMarketWeb.ApplicationLive do
 
   defp normalize_session_key(%{"session_id" => session_key})
        when is_binary(session_key) and session_key != "" do
-    session_key
+    URI.decode(session_key)
   end
 
   defp normalize_session_key(_params), do: nil
 
-  defp session_path(session_key) when is_binary(session_key), do: ~p"/#{session_key}"
+  defp session_path(session_key) when is_binary(session_key), do: ~p"/session/#{session_key}"
 end

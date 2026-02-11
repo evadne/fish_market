@@ -18,7 +18,7 @@ defmodule FishMarketWeb.Router do
     pipe_through :browser
 
     live "/", ApplicationLive, :index
-    live "/:session_id", ApplicationLive, :index
+    live "/session/:session_id", ApplicationLive, :index
   end
 
   # Other scopes may use custom stacks.
