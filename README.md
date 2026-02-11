@@ -2,7 +2,7 @@
 
 This is a WIP Elixir/Phoenix application acting as a front-end to OpenClaw.
 
-![./docs/fish.png](fish)
+![fish](./docs/fish.png)
 
 ## Configuration
 
