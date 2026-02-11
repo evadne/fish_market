@@ -8,7 +8,6 @@ defmodule FishMarket.OpenClaw do
   @pubsub FishMarket.PubSub
   @gateway_topic "openclaw:gateway"
   @chat_topic "openclaw:chat"
-  @selection_topic "openclaw:ui:session-selection"
 
   @type error_reason :: term()
 
@@ -88,20 +87,6 @@ defmodule FishMarket.OpenClaw do
     Phoenix.PubSub.unsubscribe(@pubsub, session_topic(session_key))
   end
 
-  @spec subscribe_selection() :: :ok | {:error, term()}
-  def subscribe_selection do
-    Phoenix.PubSub.subscribe(@pubsub, @selection_topic)
-  end
-
-  @spec broadcast_selection(String.t() | nil) :: :ok
-  def broadcast_selection(session_key) when is_binary(session_key) or is_nil(session_key) do
-    Phoenix.PubSub.broadcast(
-      @pubsub,
-      @selection_topic,
-      {:openclaw_ui, :select_session, session_key}
-    )
-  end
-
   @spec broadcast_gateway(atom(), term()) :: :ok
   def broadcast_gateway(event, payload) when is_atom(event) do
     message = {:openclaw_gateway, event, payload}
@@ -131,9 +116,6 @@ defmodule FishMarket.OpenClaw do
 
   @spec chat_topic() :: String.t()
   def chat_topic, do: @chat_topic
-
-  @spec selection_topic() :: String.t()
-  def selection_topic, do: @selection_topic
 
   @spec session_topic(String.t()) :: String.t()
   def session_topic(session_key) when is_binary(session_key),

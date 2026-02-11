@@ -2,6 +2,7 @@ defmodule FishMarketWeb.MenuLive do
   use FishMarketWeb, :live_view
 
   alias FishMarket.OpenClaw
+  alias FishMarketWeb.SessionRoute
 
   @refresh_states MapSet.new(["final", "aborted", "error"])
 
@@ -20,7 +21,11 @@ defmodule FishMarketWeb.MenuLive do
     if connected?(socket) do
       OpenClaw.subscribe_gateway()
       OpenClaw.subscribe_chat()
-      OpenClaw.subscribe_selection()
+
+      if is_pid(socket.parent_pid) do
+        send(socket.parent_pid, {:menu_live, :mounted, self()})
+      end
+
       send(self(), :load_sessions)
     end
 
@@ -43,7 +48,7 @@ defmodule FishMarketWeb.MenuLive do
   end
 
   @impl true
-  def handle_info({:openclaw_ui, :select_session, session_key}, socket)
+  def handle_info({:menu_ui, :selected_session, session_key}, socket)
       when is_binary(session_key) and session_key != "" do
     session_known? = has_session_key?(socket.assigns.sessions, session_key)
 
@@ -60,7 +65,7 @@ defmodule FishMarketWeb.MenuLive do
   end
 
   @impl true
-  def handle_info({:openclaw_ui, :select_session, _session_key}, socket) do
+  def handle_info({:menu_ui, :selected_session, _session_key}, socket) do
     {:noreply, assign(socket, :selected_session_key, nil)}
   end
 
@@ -219,10 +224,6 @@ defmodule FishMarketWeb.MenuLive do
           |> ensure_session_placeholder(next_selected)
           |> prune_unread_sessions(sessions)
 
-        if is_binary(next_selected) and next_selected != previous_selected do
-          OpenClaw.broadcast_selection(next_selected)
-        end
-
         socket
 
       {:ok, _payload} ->
@@ -324,7 +325,9 @@ defmodule FishMarketWeb.MenuLive do
     |> Integer.to_string()
   end
 
-  defp session_path(session_key) when is_binary(session_key), do: ~p"/session/#{session_key}"
+  defp session_path(session_key) when is_binary(session_key),
+    do: ~p"/session/#{SessionRoute.encode(session_key)}"
+
   defp session_path(_session_key), do: ~p"/"
 
   defp initial_selected_session_key(%{"selected_session_key" => session_key})
