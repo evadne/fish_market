@@ -6,6 +6,7 @@ defmodule FishMarketWeb.SessionLive do
   alias FishMarketWeb.SessionRoute
 
   @history_limit 200
+  @menu_refresh_states MapSet.new(["final", "aborted", "error"])
   @tool_trace_text_limit 12_000
 
   @impl true
@@ -20,9 +21,11 @@ defmodule FishMarketWeb.SessionLive do
 
     socket =
       socket
-      |> assign(:initial_selected_session_key, selected_session_key)
       |> assign(:selected_session_key, selected_session_key)
-      |> assign(:menu_live_pid, nil)
+      |> assign(:sessions, [])
+      |> assign(:sessions_loading?, false)
+      |> assign(:sessions_error, nil)
+      |> assign(:unread_session_keys, MapSet.new())
       |> assign(:history_loading?, false)
       |> assign(:history_request_id, nil)
       |> assign(:history_error, nil)
@@ -34,7 +37,6 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:assistant_pending?, false)
       |> assign(:streaming_text, nil)
       |> assign(:streaming_run_id, nil)
-      |> assign(:subscribed_session_key, nil)
       |> assign(:pending_session_key, nil)
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
@@ -44,11 +46,12 @@ defmodule FishMarketWeb.SessionLive do
     socket =
       if connected?(socket) do
         OpenClaw.subscribe_gateway()
+        OpenClaw.subscribe_chat()
+        OpenClaw.subscribe_event("agent")
+        send(self(), :load_menu_sessions)
 
         if is_binary(selected_session_key) do
-          socket
-          |> ensure_session_subscription(selected_session_key)
-          |> request_history_load(selected_session_key)
+          request_history_load(socket, selected_session_key)
         else
           socket
         end
@@ -63,7 +66,7 @@ defmodule FishMarketWeb.SessionLive do
   def handle_params(params, _uri, socket) do
     case normalize_session_selection(params) do
       :none ->
-        {:noreply, clear_session_selection(socket)}
+        {:noreply, maybe_select_first_session(socket)}
 
       :invalid ->
         {:noreply, reject_session_selection(socket, "Invalid session URL")}
@@ -102,12 +105,10 @@ defmodule FishMarketWeb.SessionLive do
         {:noreply,
          socket
          |> initialize_new_session(new_session_key)
-         |> ensure_session_subscription(new_session_key)
          |> append_local_user_message(message)
          |> update(:queued_messages, fn messages -> messages ++ [message] end)
          |> clear_compose()
          |> assign(:send_error, nil)
-         |> notify_menu_selection(new_session_key)
          |> push_patch(to: session_path(new_session_key))}
 
       true ->
@@ -158,8 +159,6 @@ defmodule FishMarketWeb.SessionLive do
     {:noreply,
      socket
      |> initialize_new_session(new_session_key)
-     |> ensure_session_subscription(new_session_key)
-     |> notify_menu_selection(new_session_key)
      |> push_event("chat-input-focus", %{input_id: "chat-message-input"})
      |> push_patch(to: session_path(new_session_key))}
   end
@@ -178,11 +177,14 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
-  def handle_info({:menu_live, :mounted, menu_pid}, socket) when is_pid(menu_pid) do
-    {:noreply,
-     socket
-     |> assign(:menu_live_pid, menu_pid)
-     |> notify_menu_selection(socket.assigns.selected_session_key)}
+  def handle_event("menu-select-session", %{"session_key" => session_key}, socket)
+      when is_binary(session_key) and session_key != "" do
+    {:noreply, select_session(socket, session_key)}
+  end
+
+  @impl true
+  def handle_info(:load_menu_sessions, socket) do
+    {:noreply, load_menu_sessions(socket)}
   end
 
   @impl true
@@ -249,20 +251,22 @@ defmodule FishMarketWeb.SessionLive do
     socket =
       if is_binary(selected_session_key) do
         socket
-        |> ensure_session_subscription(selected_session_key)
         |> flush_queued_messages(selected_session_key)
         |> request_history_load(selected_session_key)
       else
-        socket
+        maybe_select_first_session(socket)
       end
 
-    {:noreply, socket}
+    {:noreply, maybe_schedule_menu_refresh(socket)}
   end
 
   @impl true
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
     {:noreply,
-     socket |> assign(:history_error, "Gateway disconnected") |> sync_no_messages_state()}
+     socket
+     |> assign(:history_error, "Gateway disconnected")
+     |> assign(:sessions_error, "Gateway disconnected")
+     |> sync_no_messages_state()}
   end
 
   @impl true
@@ -272,7 +276,11 @@ defmodule FishMarketWeb.SessionLive do
 
   @impl true
   def handle_info({:openclaw_event, "chat", payload}, socket) do
-    {:noreply, socket |> apply_chat_event(payload) |> sync_no_messages_state()}
+    {:noreply,
+     socket
+     |> apply_menu_chat_event(payload)
+     |> apply_chat_event(payload)
+     |> sync_no_messages_state()}
   end
 
   @impl true
@@ -294,11 +302,15 @@ defmodule FishMarketWeb.SessionLive do
           id="page-container"
           class="mx-auto flex min-h-dvh w-full min-w-80 flex-col bg-gray-100 lg:pl-64 dark:bg-gray-900 dark:text-gray-100"
         >
-          {live_render(@socket, FishMarketWeb.MenuLive,
-            id: "menu-live",
-            sticky: true,
-            session: %{"selected_session_key" => @initial_selected_session_key}
-          )}
+          <.live_component
+            module={FishMarketWeb.MenuLive}
+            id="menu-live"
+            sessions={@sessions}
+            sessions_loading?={@sessions_loading?}
+            sessions_error={@sessions_error}
+            selected_session_key={@selected_session_key}
+            unread_session_keys={@unread_session_keys}
+          />
 
           <button
             id="page-overlay"
@@ -542,9 +554,7 @@ defmodule FishMarketWeb.SessionLive do
 
   defp select_session(socket, session_key) when is_binary(session_key) do
     if socket.assigns.selected_session_key == session_key do
-      socket
-      |> ensure_session_subscription(session_key)
-      |> notify_menu_selection(session_key)
+      clear_unread_for_selected_session(socket, session_key)
     else
       pending_session_key =
         if socket.assigns.pending_session_key == session_key do
@@ -559,13 +569,12 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:can_send_message?, false)
       |> assign(:history_messages, [])
       |> reset_streaming_state()
+      |> clear_unread_for_selected_session(session_key)
       |> assign(:pending_session_key, pending_session_key)
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [], reset: true)
-      |> ensure_session_subscription(session_key)
       |> request_history_load(session_key)
-      |> notify_menu_selection(session_key)
     end
   end
 
@@ -583,9 +592,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:queued_messages, [])
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
-    |> ensure_session_subscription(nil)
     |> sync_no_messages_state()
-    |> notify_menu_selection(nil)
   end
 
   defp reject_session_selection(socket, message) do
@@ -627,16 +634,195 @@ defmodule FishMarketWeb.SessionLive do
     end
   end
 
-  defp notify_menu_selection(socket, session_key) do
-    if is_pid(socket.assigns.menu_live_pid) do
-      send(socket.assigns.menu_live_pid, {:menu_ui, :selected_session, session_key})
-    end
-
-    socket
-  end
-
   defp session_path(session_key) when is_binary(session_key) do
     ~p"/session/#{SessionRoute.encode(session_key)}"
+  end
+
+  defp maybe_select_first_session(socket) do
+    cond do
+      not connected?(socket) ->
+        clear_session_selection(socket)
+
+      true ->
+        case first_available_session_key(socket) do
+          {:ok, session_key} ->
+            push_patch(socket, to: session_path(session_key))
+
+          :none ->
+            clear_session_selection(socket)
+        end
+    end
+  end
+
+  defp first_available_session_key(socket) do
+    case Enum.find_value(socket.assigns.sessions, &session_key_value/1) do
+      value when is_binary(value) and value != "" ->
+        {:ok, value}
+
+      _ ->
+        fetch_first_available_session_key()
+    end
+  end
+
+  defp fetch_first_available_session_key do
+    case OpenClaw.sessions_list(%{"includeGlobal" => true, "includeUnknown" => true}) do
+      {:ok, %{"sessions" => sessions}} when is_list(sessions) ->
+        sessions
+        |> Enum.sort_by(&session_updated_at/1, :desc)
+        |> Enum.find_value(&session_key_value/1)
+        |> case do
+          value when is_binary(value) and value != "" -> {:ok, value}
+          _ -> :none
+        end
+
+      _ ->
+        :none
+    end
+  end
+
+  defp session_updated_at(session) when is_map(session) do
+    session
+    |> map_get("updatedAt")
+    |> normalize_unix_timestamp()
+    |> Kernel.||(session |> map_get(:updatedAt) |> normalize_unix_timestamp())
+    |> Kernel.||(0)
+  end
+
+  defp session_updated_at(_session), do: 0
+
+  defp normalize_unix_timestamp(value) when is_integer(value) and value > 0 do
+    if value < 10_000_000_000 do
+      value * 1000
+    else
+      value
+    end
+  end
+
+  defp normalize_unix_timestamp(_), do: nil
+
+  defp load_menu_sessions(socket) do
+    socket = assign(socket, :sessions_loading?, true)
+
+    case OpenClaw.sessions_list(%{"includeGlobal" => true, "includeUnknown" => true}) do
+      {:ok, %{"sessions" => sessions}} when is_list(sessions) ->
+        sessions = Enum.sort_by(sessions, &session_updated_at/1, :desc)
+        previous_selected = socket.assigns.selected_session_key
+        next_selected = resolve_selected_session_key(sessions, previous_selected)
+
+        socket =
+          socket
+          |> assign(:sessions, sessions)
+          |> assign(:sessions_loading?, false)
+          |> assign(:sessions_error, nil)
+          |> assign(:selected_session_key, next_selected)
+          |> clear_unread_for_selected_session(next_selected)
+          |> ensure_session_placeholder(next_selected)
+          |> prune_unread_sessions(sessions)
+
+        if is_nil(next_selected) do
+          maybe_select_first_session(socket)
+        else
+          socket
+        end
+
+      {:ok, _payload} ->
+        socket
+        |> assign(:sessions_loading?, false)
+        |> assign(:sessions_error, "invalid sessions.list payload")
+
+      {:error, reason} ->
+        socket
+        |> assign(:sessions_loading?, false)
+        |> assign(:sessions_error, format_reason(reason))
+    end
+  end
+
+  defp maybe_schedule_menu_refresh(socket) do
+    if socket.assigns.sessions_loading? do
+      socket
+    else
+      send(self(), :load_menu_sessions)
+      socket
+    end
+  end
+
+  defp apply_menu_chat_event(socket, payload) when is_map(payload) do
+    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
+
+    if is_binary(session_key) do
+      socket =
+        if socket.assigns.selected_session_key == session_key do
+          clear_unread_for_selected_session(socket, session_key)
+        else
+          update(socket, :unread_session_keys, &MapSet.put(&1, session_key))
+        end
+
+      state_value = map_string(payload, "state") || map_string(payload, :state) || ""
+      session_missing? = not has_session_key?(socket.assigns.sessions, session_key)
+
+      if session_missing? or MapSet.member?(@menu_refresh_states, state_value) do
+        maybe_schedule_menu_refresh(socket)
+      else
+        socket
+      end
+    else
+      socket
+    end
+  end
+
+  defp apply_menu_chat_event(socket, _payload), do: socket
+
+  defp clear_unread_for_selected_session(socket, session_key) when is_binary(session_key) do
+    update(socket, :unread_session_keys, &MapSet.delete(&1, session_key))
+  end
+
+  defp clear_unread_for_selected_session(socket, _session_key), do: socket
+
+  defp ensure_session_placeholder(socket, session_key) when is_binary(session_key) do
+    if has_session_key?(socket.assigns.sessions, session_key) do
+      socket
+    else
+      placeholder_session = %{
+        "key" => session_key,
+        "label" => "New session",
+        "displayName" => "New session",
+        "kind" => "direct",
+        "updatedAt" => System.system_time(:millisecond)
+      }
+
+      update(socket, :sessions, fn sessions -> [placeholder_session | sessions] end)
+    end
+  end
+
+  defp ensure_session_placeholder(socket, _session_key), do: socket
+
+  defp resolve_selected_session_key([], previous_selected) when is_binary(previous_selected),
+    do: previous_selected
+
+  defp resolve_selected_session_key([], _previous), do: nil
+
+  defp resolve_selected_session_key(_sessions, previous_selected)
+       when is_binary(previous_selected),
+       do: previous_selected
+
+  defp resolve_selected_session_key(_sessions, _previous), do: nil
+
+  defp prune_unread_sessions(socket, sessions) do
+    valid_keys =
+      sessions
+      |> Enum.map(&session_key_value/1)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    assign(
+      socket,
+      :unread_session_keys,
+      MapSet.intersection(socket.assigns.unread_session_keys, valid_keys)
+    )
+  end
+
+  defp has_session_key?(sessions, key) when is_binary(key) do
+    Enum.any?(sessions, fn session -> session_key_value(session) == key end)
   end
 
   defp apply_history_result(socket, result) do
@@ -923,35 +1109,6 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
     |> sync_no_messages_state()
-  end
-
-  defp ensure_session_subscription(socket, session_key) when is_binary(session_key) do
-    previous_session_key = socket.assigns.subscribed_session_key
-
-    cond do
-      previous_session_key == session_key ->
-        socket
-
-      is_binary(previous_session_key) ->
-        OpenClaw.unsubscribe_session(previous_session_key)
-        OpenClaw.subscribe_session(session_key)
-        assign(socket, :subscribed_session_key, session_key)
-
-      true ->
-        OpenClaw.subscribe_session(session_key)
-        assign(socket, :subscribed_session_key, session_key)
-    end
-  end
-
-  defp ensure_session_subscription(socket, _session_key) do
-    previous_session_key = socket.assigns.subscribed_session_key
-
-    if is_binary(previous_session_key) do
-      OpenClaw.unsubscribe_session(previous_session_key)
-      assign(socket, :subscribed_session_key, nil)
-    else
-      socket
-    end
   end
 
   defp clear_compose(socket) do

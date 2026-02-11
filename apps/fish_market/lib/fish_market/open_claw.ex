@@ -77,6 +77,16 @@ defmodule FishMarket.OpenClaw do
     Phoenix.PubSub.subscribe(@pubsub, @chat_topic)
   end
 
+  @spec subscribe_event(String.t()) :: :ok | {:error, term()}
+  def subscribe_event(event) when is_binary(event) and event != "" do
+    Phoenix.PubSub.subscribe(@pubsub, event_topic(event))
+  end
+
+  @spec unsubscribe_event(String.t()) :: :ok
+  def unsubscribe_event(event) when is_binary(event) and event != "" do
+    Phoenix.PubSub.unsubscribe(@pubsub, event_topic(event))
+  end
+
   @spec subscribe_session(String.t()) :: :ok | {:error, term()}
   def subscribe_session(session_key) when is_binary(session_key) do
     Phoenix.PubSub.subscribe(@pubsub, session_topic(session_key))
@@ -96,6 +106,7 @@ defmodule FishMarket.OpenClaw do
        |> Map.put_new("sessionKey", session_key)
        |> Map.put_new(:sessionKey, session_key)}
 
+    Phoenix.PubSub.broadcast(@pubsub, @chat_topic, message)
     Phoenix.PubSub.broadcast(@pubsub, session_topic(session_key), message)
   end
 

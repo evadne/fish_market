@@ -1,106 +1,7 @@
 defmodule FishMarketWeb.MenuLive do
-  use FishMarketWeb, :live_view
+  use FishMarketWeb, :live_component
 
-  alias FishMarket.OpenClaw
   alias FishMarketWeb.SessionRoute
-
-  @refresh_states MapSet.new(["final", "aborted", "error"])
-
-  @impl true
-  def mount(_params, session, socket) do
-    selected_session_key = initial_selected_session_key(session)
-
-    socket =
-      socket
-      |> assign(:sessions, [])
-      |> assign(:sessions_loading?, false)
-      |> assign(:sessions_error, nil)
-      |> assign(:selected_session_key, selected_session_key)
-      |> assign(:unread_session_keys, MapSet.new())
-
-    if connected?(socket) do
-      OpenClaw.subscribe_gateway()
-      OpenClaw.subscribe_chat()
-
-      if is_pid(socket.parent_pid) do
-        send(socket.parent_pid, {:menu_live, :mounted, self()})
-      end
-
-      send(self(), :load_sessions)
-    end
-
-    {:ok, socket}
-  end
-
-  @impl true
-  def handle_info(:load_sessions, socket) do
-    {:noreply, load_sessions(socket)}
-  end
-
-  @impl true
-  def handle_info({:openclaw_gateway, :connected, _payload}, socket) do
-    {:noreply, load_sessions(socket)}
-  end
-
-  @impl true
-  def handle_info({:openclaw_gateway, :disconnected, payload}, socket) do
-    {:noreply, assign(socket, :sessions_error, connection_error(payload))}
-  end
-
-  @impl true
-  def handle_info({:menu_ui, :selected_session, session_key}, socket)
-      when is_binary(session_key) and session_key != "" do
-    session_known? = has_session_key?(socket.assigns.sessions, session_key)
-
-    socket =
-      socket
-      |> select_session(session_key)
-      |> ensure_session_placeholder(session_key)
-
-    if session_known? do
-      {:noreply, socket}
-    else
-      {:noreply, maybe_schedule_refresh(socket)}
-    end
-  end
-
-  @impl true
-  def handle_info({:menu_ui, :selected_session, _session_key}, socket) do
-    {:noreply, assign(socket, :selected_session_key, nil)}
-  end
-
-  @impl true
-  def handle_info({:openclaw_event, "chat", payload}, socket) do
-    session_key = payload_session_key(payload)
-
-    if is_binary(session_key) do
-      socket =
-        if socket.assigns.selected_session_key == session_key do
-          socket
-        else
-          update(socket, :unread_session_keys, &MapSet.put(&1, session_key))
-        end
-
-      state_value = payload_state(payload)
-      session_missing? = not has_session_key?(socket.assigns.sessions, session_key)
-
-      socket =
-        if session_missing? or MapSet.member?(@refresh_states, state_value) do
-          maybe_schedule_refresh(socket)
-        else
-          socket
-        end
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_info({:openclaw_event, _event, _payload}, socket) do
-    {:noreply, socket}
-  end
 
   @impl true
   def render(assigns) do
@@ -171,6 +72,8 @@ defmodule FishMarketWeb.MenuLive do
               :for={session <- @sessions}
               id={"menu-session-" <> session_dom_id(session_key(session))}
               patch={session_path(session_key(session))}
+              phx-click="menu-select-session"
+              phx-value-session_key={session_key(session)}
               class={[
                 "group flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm font-medium active:border-gray-600",
                 @selected_session_key == session_key(session) && "bg-gray-700/75 text-white",
@@ -206,100 +109,6 @@ defmodule FishMarketWeb.MenuLive do
     """
   end
 
-  defp load_sessions(socket) do
-    socket = assign(socket, :sessions_loading?, true)
-
-    case OpenClaw.sessions_list(%{"includeGlobal" => true, "includeUnknown" => true}) do
-      {:ok, %{"sessions" => sessions}} when is_list(sessions) ->
-        sessions = Enum.sort_by(sessions, &updated_at/1, :desc)
-        previous_selected = socket.assigns.selected_session_key
-        next_selected = resolve_selected_session_key(sessions, previous_selected)
-
-        socket =
-          socket
-          |> assign(:sessions, sessions)
-          |> assign(:sessions_loading?, false)
-          |> assign(:sessions_error, nil)
-          |> assign(:selected_session_key, next_selected)
-          |> ensure_session_placeholder(next_selected)
-          |> prune_unread_sessions(sessions)
-
-        socket
-
-      {:ok, _payload} ->
-        socket
-        |> assign(:sessions_loading?, false)
-        |> assign(:sessions_error, "invalid sessions.list payload")
-
-      {:error, reason} ->
-        socket
-        |> assign(:sessions_loading?, false)
-        |> assign(:sessions_error, format_reason(reason))
-    end
-  end
-
-  defp maybe_schedule_refresh(socket) do
-    if socket.assigns.sessions_loading? do
-      socket
-    else
-      send(self(), :load_sessions)
-      socket
-    end
-  end
-
-  defp select_session(socket, session_key) when is_binary(session_key) do
-    socket
-    |> assign(:selected_session_key, session_key)
-    |> update(:unread_session_keys, &MapSet.delete(&1, session_key))
-  end
-
-  defp ensure_session_placeholder(socket, session_key) when is_binary(session_key) do
-    if has_session_key?(socket.assigns.sessions, session_key) do
-      socket
-    else
-      placeholder_session = %{
-        "key" => session_key,
-        "label" => "New session",
-        "displayName" => "New session",
-        "kind" => "direct",
-        "updatedAt" => System.system_time(:millisecond)
-      }
-
-      update(socket, :sessions, fn sessions -> [placeholder_session | sessions] end)
-    end
-  end
-
-  defp ensure_session_placeholder(socket, _session_key), do: socket
-
-  defp resolve_selected_session_key([], previous_selected) when is_binary(previous_selected),
-    do: previous_selected
-
-  defp resolve_selected_session_key([], _previous), do: nil
-
-  defp resolve_selected_session_key(_sessions, previous_selected)
-       when is_binary(previous_selected),
-       do: previous_selected
-
-  defp resolve_selected_session_key(_sessions, _previous), do: nil
-
-  defp prune_unread_sessions(socket, sessions) do
-    valid_keys =
-      sessions
-      |> Enum.map(&session_key/1)
-      |> Enum.reject(&is_nil/1)
-      |> MapSet.new()
-
-    assign(
-      socket,
-      :unread_session_keys,
-      MapSet.intersection(socket.assigns.unread_session_keys, valid_keys)
-    )
-  end
-
-  defp has_session_key?(sessions, key) when is_binary(key) do
-    Enum.any?(sessions, fn session -> session_key(session) == key end)
-  end
-
   defp session_key(session) when is_map(session) do
     map_string(session, "key") || map_string(session, :key)
   end
@@ -330,13 +139,6 @@ defmodule FishMarketWeb.MenuLive do
 
   defp session_path(_session_key), do: ~p"/"
 
-  defp initial_selected_session_key(%{"selected_session_key" => session_key})
-       when is_binary(session_key) and session_key != "" do
-    session_key
-  end
-
-  defp initial_selected_session_key(_session), do: nil
-
   defp updated_at(session) do
     map_integer(session, "updatedAt")
     |> normalize_unix_timestamp()
@@ -356,21 +158,6 @@ defmodule FishMarketWeb.MenuLive do
         end
     end
   end
-
-  defp payload_session_key(payload) do
-    map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
-  end
-
-  defp payload_state(payload) do
-    map_string(payload, "state") || map_string(payload, :state) || ""
-  end
-
-  defp connection_error(%{reason: reason}) when is_binary(reason), do: reason
-  defp connection_error(_payload), do: "Gateway disconnected"
-
-  defp format_reason(%{"message" => message}) when is_binary(message), do: message
-  defp format_reason(%{message: message}) when is_binary(message), do: message
-  defp format_reason(reason), do: inspect(reason)
 
   defp map_integer(map, key) when is_map(map) do
     case Map.get(map, key) do
