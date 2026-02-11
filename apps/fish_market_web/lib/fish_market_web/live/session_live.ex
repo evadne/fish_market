@@ -5,6 +5,7 @@ defmodule FishMarketWeb.SessionLive do
   alias FishMarket.OpenClaw.Message
 
   @history_limit 200
+  @tool_trace_text_limit 12_000
 
   @impl true
   def mount(_params, _session, socket) do
@@ -21,6 +22,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:assistant_pending?, false)
       |> assign(:streaming_text, nil)
       |> assign(:streaming_run_id, nil)
+      |> assign(:subscribed_session_key, nil)
       |> assign(:pending_session_key, nil)
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
@@ -28,7 +30,6 @@ defmodule FishMarketWeb.SessionLive do
 
     if connected?(socket) do
       OpenClaw.subscribe_gateway()
-      OpenClaw.subscribe_chat()
       OpenClaw.subscribe_selection()
     end
 
@@ -61,6 +62,7 @@ defmodule FishMarketWeb.SessionLive do
         {:noreply,
          socket
          |> initialize_new_session(new_session_key)
+         |> ensure_session_subscription(new_session_key)
          |> append_local_user_message(message)
          |> update(:queued_messages, fn messages -> messages ++ [message] end)
          |> clear_compose()
@@ -100,6 +102,7 @@ defmodule FishMarketWeb.SessionLive do
     {:noreply,
      socket
      |> initialize_new_session(new_session_key)
+     |> ensure_session_subscription(new_session_key)
      |> push_event("chat-input-focus", %{input_id: "chat-message-input"})}
   end
 
@@ -118,7 +121,7 @@ defmodule FishMarketWeb.SessionLive do
   def handle_info({:openclaw_ui, :select_session, session_key}, socket)
       when is_binary(session_key) and session_key != "" do
     if socket.assigns.selected_session_key == session_key do
-      {:noreply, socket}
+      {:noreply, ensure_session_subscription(socket, session_key)}
     else
       {:noreply,
        socket
@@ -126,13 +129,12 @@ defmodule FishMarketWeb.SessionLive do
        |> assign(:send_error, nil)
        |> assign(:can_send_message?, false)
        |> assign(:history_messages, [])
-       |> assign(:assistant_pending?, false)
-       |> assign(:streaming_text, nil)
-       |> assign(:streaming_run_id, nil)
+       |> reset_streaming_state()
        |> assign(:pending_session_key, nil)
        |> assign(:queued_messages, [])
        |> assign(:form, to_form(%{"message" => ""}, as: :chat))
        |> stream(:messages, [], reset: true)
+       |> ensure_session_subscription(session_key)
        |> request_history_load(session_key)}
     end
   end
@@ -201,6 +203,7 @@ defmodule FishMarketWeb.SessionLive do
     socket =
       if is_binary(selected_session_key) do
         socket
+        |> ensure_session_subscription(selected_session_key)
         |> flush_queued_messages(selected_session_key)
         |> request_history_load(selected_session_key)
       else
@@ -262,18 +265,6 @@ defmodule FishMarketWeb.SessionLive do
               <.icon name="hero-bars-3" class="size-5" />
             </button>
           </div>
-
-          <div class="hidden lg:block">
-            <form onsubmit="return false;">
-              <input
-                id="header-search"
-                type="text"
-                name="search"
-                class="block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm leading-5 placeholder-gray-400 focus:border-purple-500 focus:ring-3 focus:ring-purple-500/50 dark:border-gray-700 dark:bg-gray-900/25 dark:text-gray-200 dark:placeholder-gray-400"
-                placeholder="Search.."
-              />
-            </form>
-          </div>
         </div>
 
         <div class="flex items-center gap-2">
@@ -291,15 +282,6 @@ defmodule FishMarketWeb.SessionLive do
             class="inline-flex items-center justify-center rounded-lg border border-purple-700 bg-purple-700 px-3 py-2 text-sm leading-5 font-semibold text-purple-50 hover:border-purple-600 hover:bg-purple-600 focus:outline-hidden focus:ring-3 focus:ring-purple-500/50"
           >
             New Session
-          </button>
-
-          <button
-            id="notifications-button"
-            type="button"
-            class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm leading-5 font-semibold text-gray-800 hover:border-gray-300 hover:text-gray-900 hover:shadow-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600 dark:hover:text-gray-200"
-            aria-label="Notifications"
-          >
-            <.icon name="hero-bell-alert" class="size-5" />
           </button>
         </div>
       </div>
@@ -380,7 +362,7 @@ defmodule FishMarketWeb.SessionLive do
                 :for={{id, message} <- @streams.messages}
                 id={id}
                 class={[
-                  "max-w-3xl rounded-lg border px-4 py-3 text-sm leading-6",
+                  "max-w-3xl rounded-lg border px-4 py-3 text-sm",
                   message.role == "user" &&
                     "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100",
                   message.role != "user" &&
@@ -393,31 +375,30 @@ defmodule FishMarketWeb.SessionLive do
                 </div>
                 <div class="whitespace-pre-wrap break-words">{message.text}</div>
               </article>
-            </div>
 
-            <article
-              :if={@assistant_pending? or @streaming_text}
-              id="session-streaming-message"
-              class="mt-3 mr-auto max-w-3xl rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm leading-6 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-            >
-              <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                assistant (streaming)
-              </div>
-              <div
-                :if={is_binary(@streaming_text) and @streaming_text != ""}
-                class="whitespace-pre-wrap break-words"
+              <article
+                :if={
+                  is_binary(@selected_session_key) and
+                    (@assistant_pending? or @streaming_text)
+                }
+                id="session-streaming-message"
+                class="mr-auto max-w-3xl rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
               >
-                {@streaming_text}
-              </div>
-              <div
-                :if={not (is_binary(@streaming_text) and @streaming_text != "")}
-                class="inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
-              >
-                <span class="inline-block size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600 dark:border-gray-600 dark:border-t-purple-400">
-                </span>
-                <span>Assistant is thinking...</span>
-              </div>
-            </article>
+                <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                  <span class="font-semibold uppercase tracking-wide">assistant</span>
+                  <span class="font-medium">streaming...</span>
+                </div>
+                <div class="whitespace-pre-wrap break-words">{@streaming_text}</div>
+                <div
+                  :if={not (is_binary(@streaming_text) and @streaming_text != "")}
+                  class="inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
+                >
+                  <span class="inline-block size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600 dark:border-gray-600 dark:border-t-purple-400">
+                  </span>
+                  <span>Assistant is thinking...</span>
+                </div>
+              </article>
+            </div>
           </div>
 
           <div class="border-t border-gray-200 px-4 py-4 dark:border-gray-700 lg:px-6">
@@ -469,6 +450,8 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp apply_history_result(socket, result) do
+    socket = reset_streaming_state(socket)
+
     case result do
       {:ok, %{"messages" => messages}} when is_list(messages) ->
         normalized = normalize_history_messages(messages)
@@ -529,8 +512,10 @@ defmodule FishMarketWeb.SessionLive do
 
       if run_mismatch? do
         case state_value do
-          "final" ->
-            request_history_load(socket, session_key)
+          value when value in ["final", "aborted", "error"] ->
+            socket
+            |> reset_streaming_state()
+            |> request_history_load(session_key)
 
           _ ->
             socket
@@ -562,34 +547,20 @@ defmodule FishMarketWeb.SessionLive do
 
           "final" ->
             socket =
-              socket
-              |> assign(:assistant_pending?, false)
-              |> assign(:streaming_text, nil)
-              |> assign(:streaming_run_id, nil)
+              reset_streaming_state(socket)
 
-            final_message = payload |> map_get("message")
-
-            cond do
-              is_map(final_message) ->
-                normalized = normalize_history_message(final_message, "live-final")
-                insert_history_message(socket, normalized)
-
-              true ->
-                request_history_load(socket, session_key)
-            end
+            request_history_load(socket, session_key)
 
           "aborted" ->
             socket
-            |> assign(:assistant_pending?, false)
-            |> assign(:streaming_text, nil)
-            |> assign(:streaming_run_id, nil)
+            |> reset_streaming_state()
+            |> request_history_load(session_key)
 
           "error" ->
             socket
-            |> assign(:assistant_pending?, false)
-            |> assign(:streaming_text, nil)
-            |> assign(:streaming_run_id, nil)
+            |> reset_streaming_state()
             |> assign(:send_error, map_string(payload, "errorMessage") || "chat error")
+            |> request_history_load(session_key)
 
           _ ->
             socket
@@ -617,12 +588,57 @@ defmodule FishMarketWeb.SessionLive do
     stream = map_string(payload, "stream") || map_string(payload, :stream)
     run_id = map_string(payload, "runId") || map_string(payload, :runId)
 
-    if socket.assigns.selected_session_key == session_key and stream not in ["tool", "compaction"] do
+    if socket.assigns.selected_session_key != session_key do
       socket
-      |> assign(:assistant_pending?, true)
-      |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
     else
-      socket
+      case stream do
+        "assistant" ->
+          socket
+          |> assign(:assistant_pending?, true)
+          |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
+
+        "lifecycle" ->
+          data = map_get(payload, "data") || map_get(payload, :data)
+
+          phase =
+            if is_map(data) do
+              map_string(data, "phase") || map_string(data, :phase)
+            else
+              nil
+            end
+
+          tracked_run_id = socket.assigns.streaming_run_id
+
+          cond do
+            phase in ["start", "prepare"] ->
+              socket
+              |> assign(:assistant_pending?, true)
+              |> assign(:streaming_run_id, run_id || tracked_run_id)
+
+            phase in ["end", "error"] and (is_nil(tracked_run_id) or tracked_run_id == run_id) ->
+              reset_streaming_state(socket)
+
+            true ->
+              socket
+          end
+
+        "tool" ->
+          socket =
+            socket
+            |> assign(:assistant_pending?, true)
+            |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
+
+          case build_tool_trace_message(payload) do
+            nil -> socket
+            message -> upsert_history_message(socket, message)
+          end
+
+        "compaction" ->
+          socket
+
+        _ ->
+          socket
+      end
     end
   end
 
@@ -640,9 +656,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:history_error, nil)
     |> assign(:history_loading?, false)
     |> assign(:history_request_id, nil)
-    |> assign(:streaming_text, nil)
-    |> assign(:streaming_run_id, nil)
-    |> assign(:assistant_pending?, false)
+    |> reset_streaming_state()
     |> assign(:can_send_message?, false)
     |> assign(:history_messages, [])
     |> assign(:queued_messages, [])
@@ -650,11 +664,191 @@ defmodule FishMarketWeb.SessionLive do
     |> stream(:messages, [], reset: true)
   end
 
+  defp ensure_session_subscription(socket, session_key) when is_binary(session_key) do
+    previous_session_key = socket.assigns.subscribed_session_key
+
+    cond do
+      previous_session_key == session_key ->
+        socket
+
+      is_binary(previous_session_key) ->
+        OpenClaw.unsubscribe_session(previous_session_key)
+        OpenClaw.subscribe_session(session_key)
+        assign(socket, :subscribed_session_key, session_key)
+
+      true ->
+        OpenClaw.subscribe_session(session_key)
+        assign(socket, :subscribed_session_key, session_key)
+    end
+  end
+
+  defp ensure_session_subscription(socket, _session_key) do
+    previous_session_key = socket.assigns.subscribed_session_key
+
+    if is_binary(previous_session_key) do
+      OpenClaw.unsubscribe_session(previous_session_key)
+      assign(socket, :subscribed_session_key, nil)
+    else
+      socket
+    end
+  end
+
   defp clear_compose(socket) do
     socket
     |> assign(:can_send_message?, false)
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> push_event("chat-input-clear", %{input_id: "chat-message-input"})
+  end
+
+  defp reset_streaming_state(socket) do
+    socket
+    |> assign(:assistant_pending?, false)
+    |> assign(:streaming_text, nil)
+    |> assign(:streaming_run_id, nil)
+  end
+
+  defp upsert_history_message(socket, message) when is_map(message) do
+    message_id = Map.get(message, :id)
+
+    case Enum.find_index(socket.assigns.history_messages, &(&1.id == message_id)) do
+      nil ->
+        insert_history_message(socket, message)
+
+      index ->
+        updated_messages = List.replace_at(socket.assigns.history_messages, index, message)
+        socket = assign(socket, :history_messages, updated_messages)
+
+        if socket.assigns.show_traces? or not Map.get(message, :trace?, false) do
+          stream_insert(socket, :messages, message)
+        else
+          socket
+        end
+    end
+  end
+
+  defp build_tool_trace_message(payload) when is_map(payload) do
+    data = map_get(payload, "data") || map_get(payload, :data)
+
+    if is_map(data) do
+      run_id = map_string(payload, "runId") || map_string(payload, :runId) || "run"
+      sequence = map_get(payload, "seq") || map_get(payload, :seq) || "seq"
+      tool_call_id = map_string(data, "toolCallId") || map_string(data, :toolCallId)
+      phase = map_string(data, "phase") || map_string(data, :phase) || "update"
+      name = map_string(data, "name") || map_string(data, :name) || "(unnamed tool)"
+      args = map_get(data, "args") || map_get(data, :args)
+      result = map_get(data, "result") || map_get(data, :result)
+      partial_result = map_get(data, "partialResult") || map_get(data, :partialResult)
+      error = map_get(data, "error") || map_get(data, :error)
+
+      text =
+        build_tool_trace_text(%{
+          name: name,
+          phase: phase,
+          args: args,
+          result: result,
+          partial_result: partial_result,
+          error: error
+        })
+
+      if is_binary(text) and String.trim(text) != "" do
+        id =
+          if is_binary(tool_call_id) and tool_call_id != "" do
+            "tool-stream-#{run_id}-#{tool_call_id}"
+          else
+            "tool-stream-#{run_id}-#{sequence}"
+          end
+
+        %{
+          id: id,
+          role: "toolresult",
+          text: text,
+          timestamp_label: format_timestamp_label(Message.timestamp_ms(payload)),
+          trace?: true
+        }
+      else
+        nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp build_tool_trace_text(%{
+         name: name,
+         phase: phase,
+         args: args,
+         result: result,
+         partial_result: partial_result,
+         error: error
+       }) do
+    output =
+      cond do
+        phase == "result" -> result
+        phase == "update" -> partial_result || result
+        true -> nil
+      end
+
+    sections = [
+      "---",
+      "name: #{name}",
+      "phase: #{phase}",
+      format_trace_section("args", args),
+      format_trace_section("output", output),
+      format_trace_section("error", error)
+    ]
+
+    sections
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+    |> truncate_trace_text(@tool_trace_text_limit)
+  end
+
+  defp format_trace_section(_label, nil), do: nil
+
+  defp format_trace_section(label, value) do
+    rendered = format_trace_value(value)
+
+    if rendered == "" do
+      nil
+    else
+      "#{label}:\n#{rendered}"
+    end
+  end
+
+  defp format_trace_value(value) when is_binary(value), do: String.trim(value)
+  defp format_trace_value(value) when is_boolean(value), do: to_string(value)
+  defp format_trace_value(value) when is_integer(value), do: Integer.to_string(value)
+  defp format_trace_value(value) when is_float(value), do: :erlang.float_to_binary(value)
+
+  defp format_trace_value(value) when is_list(value) or is_map(value) do
+    maybe_text =
+      if is_map(value) do
+        Message.extract_text(value)
+      else
+        nil
+      end
+
+    cond do
+      is_binary(maybe_text) and String.trim(maybe_text) != "" ->
+        String.trim(maybe_text)
+
+      true ->
+        case Jason.encode(value, pretty: true) do
+          {:ok, json} -> json
+          _ -> inspect(value)
+        end
+    end
+  end
+
+  defp format_trace_value(value), do: inspect(value)
+
+  defp truncate_trace_text(text, limit)
+       when is_binary(text) and is_integer(limit) and limit > 0 do
+    if String.length(text) <= limit do
+      text
+    else
+      String.slice(text, 0, limit) <> "\n\n... truncated ..."
+    end
   end
 
   defp enqueue_session_creation(session_key) when is_binary(session_key) do
