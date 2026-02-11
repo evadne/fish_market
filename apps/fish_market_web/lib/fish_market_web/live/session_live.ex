@@ -18,6 +18,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:send_error, nil)
       |> assign(:can_send_message?, false)
       |> assign(:show_traces?, false)
+      |> assign(:show_no_messages_state?, false)
       |> assign(:history_messages, [])
       |> assign(:assistant_pending?, false)
       |> assign(:streaming_text, nil)
@@ -27,6 +28,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
+      |> sync_no_messages_state()
 
     if connected?(socket) do
       OpenClaw.subscribe_gateway()
@@ -215,17 +217,18 @@ defmodule FishMarketWeb.SessionLive do
 
   @impl true
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
-    {:noreply, assign(socket, :history_error, "Gateway disconnected")}
+    {:noreply,
+     socket |> assign(:history_error, "Gateway disconnected") |> sync_no_messages_state()}
   end
 
   @impl true
   def handle_info({:openclaw_event, "chat", payload}, socket) do
-    {:noreply, apply_chat_event(socket, payload)}
+    {:noreply, socket |> apply_chat_event(payload) |> sync_no_messages_state()}
   end
 
   @impl true
   def handle_info({:openclaw_event, "agent", payload}, socket) do
-    {:noreply, apply_agent_event(socket, payload)}
+    {:noreply, socket |> apply_agent_event(payload) |> sync_no_messages_state()}
   end
 
   @impl true
@@ -349,32 +352,38 @@ defmodule FishMarketWeb.SessionLive do
               {@history_error}
             </div>
 
-            <div id="session-messages" phx-update="stream" class="space-y-3">
-              <div
-                :if={not @history_loading? and is_nil(@history_error)}
-                id="session-messages-empty"
-                class="hidden only:block rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
-              >
-                No messages yet.
-              </div>
+            <div
+              :if={@show_no_messages_state?}
+              id="session-messages-empty-state"
+              class="flex min-h-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 py-64 text-gray-400 dark:border-gray-700 dark:bg-gray-800"
+            >
+              No Messages
+            </div>
 
-              <article
-                :for={{id, message} <- @streams.messages}
-                id={id}
-                class={[
-                  "max-w-3xl rounded-lg border px-4 py-3 text-sm",
-                  message.role == "user" &&
-                    "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100",
-                  message.role != "user" &&
-                    "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-                ]}
-              >
-                <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                  <span class="font-semibold uppercase tracking-wide">{message.role}</span>
-                  <span class="font-medium">{message.timestamp_label || "time unavailable"}</span>
-                </div>
-                <div class="whitespace-pre-wrap break-words">{message.text}</div>
-              </article>
+            <div
+              :if={not @show_no_messages_state?}
+              id="session-messages"
+              class="space-y-3"
+            >
+              <div id="session-messages-stream" phx-update="stream" class="space-y-3">
+                <article
+                  :for={{id, message} <- @streams.messages}
+                  id={id}
+                  class={[
+                    "max-w-3xl rounded-lg border px-4 py-3 text-sm",
+                    message.role == "user" &&
+                      "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100",
+                    message.role != "user" &&
+                      "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                  ]}
+                >
+                  <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span class="font-semibold uppercase tracking-wide">{message.role}</span>
+                    <span class="font-medium">{message.timestamp_label || "time unavailable"}</span>
+                  </div>
+                  <div class="whitespace-pre-wrap break-words">{message.text}</div>
+                </article>
+              </div>
 
               <article
                 :if={
@@ -473,6 +482,7 @@ defmodule FishMarketWeb.SessionLive do
         |> assign(:history_loading?, false)
         |> assign(:history_error, format_reason(reason))
     end
+    |> sync_no_messages_state()
   end
 
   defp request_history_load(socket, session_key) when is_binary(session_key) do
@@ -483,6 +493,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:history_request_id, request_id)
     |> assign(:history_loading?, true)
     |> assign(:history_error, nil)
+    |> sync_no_messages_state()
   end
 
   defp append_local_user_message(socket, message) do
@@ -546,8 +557,19 @@ defmodule FishMarketWeb.SessionLive do
             end
 
           "final" ->
+            final_text = payload |> map_get("message") |> Message.extract_text()
+
             socket =
-              reset_streaming_state(socket)
+              socket
+              |> assign(:assistant_pending?, true)
+              |> assign(:streaming_run_id, run_id || tracked_run_id)
+
+            socket =
+              if is_binary(final_text) and final_text != "" do
+                assign(socket, :streaming_text, final_text)
+              else
+                socket
+              end
 
             request_history_load(socket, session_key)
 
@@ -581,6 +603,7 @@ defmodule FishMarketWeb.SessionLive do
     else
       socket
     end
+    |> sync_no_messages_state()
   end
 
   defp apply_agent_event(socket, payload) when is_map(payload) do
@@ -662,6 +685,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:queued_messages, [])
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
+    |> sync_no_messages_state()
   end
 
   defp ensure_session_subscription(socket, session_key) when is_binary(session_key) do
@@ -723,6 +747,7 @@ defmodule FishMarketWeb.SessionLive do
         else
           socket
         end
+        |> sync_no_messages_state()
     end
   end
 
@@ -954,6 +979,35 @@ defmodule FishMarketWeb.SessionLive do
 
   defp visible_messages(messages, show_traces?) when is_list(messages) do
     Enum.filter(messages, fn message -> show_traces? or not message.trace? end)
+  end
+
+  defp show_no_messages_state?(
+         history_loading?,
+         history_error,
+         history_messages,
+         assistant_pending?,
+         streaming_text
+       )
+       when is_boolean(history_loading?) and is_list(history_messages) do
+    not history_loading? and
+      is_nil(history_error) and
+      history_messages == [] and
+      not assistant_pending? and
+      not (is_binary(streaming_text) and streaming_text != "")
+  end
+
+  defp sync_no_messages_state(socket) do
+    assign(
+      socket,
+      :show_no_messages_state?,
+      show_no_messages_state?(
+        socket.assigns.history_loading?,
+        socket.assigns.history_error,
+        socket.assigns.history_messages,
+        socket.assigns.assistant_pending?,
+        socket.assigns.streaming_text
+      )
+    )
   end
 
   defp trace_message?(message, role) when is_map(message) do
