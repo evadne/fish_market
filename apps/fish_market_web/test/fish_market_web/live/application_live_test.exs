@@ -11,6 +11,7 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#page-sidebar")
     assert has_element?(view, "#page-header")
     assert has_element?(view, "#session-content")
+    assert has_element?(view, "textarea#chat-message-input")
   end
 
   test "renders application shell for session route", %{conn: conn} do

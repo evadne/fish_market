@@ -108,6 +108,10 @@ window.addEventListener("phx:chat-input-clear", (event) => {
   if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return
 
   input.value = ""
+  if (input instanceof HTMLTextAreaElement) {
+    input.style.height = "auto"
+    input.style.overflowY = "hidden"
+  }
   input.focus()
 })
 
@@ -280,6 +284,70 @@ const AutoScrollMessages = {
   },
 }
 
+const ChatComposer = {
+  mounted() {
+    this.isComposing = false
+    this.maxRows = 10
+    this.resizeComposer = () => {
+      const computed = window.getComputedStyle(this.el)
+      const lineHeight = Number.parseFloat(computed.lineHeight) || 20
+      const verticalPadding =
+        (Number.parseFloat(computed.paddingTop) || 0) + (Number.parseFloat(computed.paddingBottom) || 0)
+      const verticalBorder =
+        (Number.parseFloat(computed.borderTopWidth) || 0) +
+        (Number.parseFloat(computed.borderBottomWidth) || 0)
+      const maxHeight = Math.ceil(lineHeight * this.maxRows + verticalPadding + verticalBorder)
+
+      this.el.style.height = "auto"
+      const nextHeight = Math.min(this.el.scrollHeight, maxHeight)
+      this.el.style.height = `${nextHeight}px`
+      this.el.style.overflowY = this.el.scrollHeight > maxHeight ? "auto" : "hidden"
+    }
+    this.handleCompositionStart = () => {
+      this.isComposing = true
+    }
+    this.handleCompositionEnd = () => {
+      this.isComposing = false
+    }
+    this.handleKeyDown = (event) => {
+      if (event.key !== "Enter") return
+      if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.isComposing || this.isComposing) return
+
+      const form = this.el.form
+      if (!(form instanceof HTMLFormElement)) return
+
+      event.preventDefault()
+      form.requestSubmit()
+    }
+    this.handleInput = () => {
+      this.resizeComposer()
+    }
+    this.handleWindowResize = () => {
+      this.resizeComposer()
+    }
+
+    this.el.addEventListener("compositionstart", this.handleCompositionStart)
+    this.el.addEventListener("compositionend", this.handleCompositionEnd)
+    this.el.addEventListener("keydown", this.handleKeyDown)
+    this.el.addEventListener("input", this.handleInput)
+    window.addEventListener("resize", this.handleWindowResize)
+    requestAnimationFrame(() => this.resizeComposer())
+  },
+
+  updated() {
+    this.resizeComposer()
+  },
+
+  destroyed() {
+    this.el.removeEventListener("compositionstart", this.handleCompositionStart)
+    this.el.removeEventListener("compositionend", this.handleCompositionEnd)
+    this.el.removeEventListener("keydown", this.handleKeyDown)
+    this.el.removeEventListener("input", this.handleInput)
+    window.removeEventListener("resize", this.handleWindowResize)
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -287,7 +355,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     _csrf_token: csrfToken,
     show_traces: readShowTracesPreference(),
   }),
-  hooks: {...colocatedHooks, AutoScrollMessages},
+  hooks: {...colocatedHooks, AutoScrollMessages, ChatComposer},
 })
 
 // Show progress bar on live navigation and form submits

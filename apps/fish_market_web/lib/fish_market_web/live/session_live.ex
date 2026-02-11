@@ -497,15 +497,17 @@ defmodule FishMarketWeb.SessionLive do
                     id="chat-message-form"
                     phx-change="compose-message"
                     phx-submit="send-message"
-                    class="flex items-center gap-3"
+                    class="flex items-end gap-3"
                   >
                     <div class="min-w-0 flex-1 [&_.fieldset]:mb-0">
                       <.input
                         field={@form[:message]}
                         id="chat-message-input"
-                        type="text"
+                        type="textarea"
+                        rows="1"
+                        phx-hook="ChatComposer"
                         placeholder="Send a message to this session"
-                        class="block h-10 w-full rounded-lg border border-gray-300 px-3 text-sm leading-5 text-gray-900 placeholder-gray-400 focus:border-purple-500 focus:ring-3 focus:ring-purple-500/50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder-gray-400"
+                        class="block min-h-10 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm leading-5 text-gray-900 placeholder-gray-400 focus:border-purple-500 focus:ring-3 focus:ring-purple-500/50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder-gray-400"
                       />
                     </div>
 
