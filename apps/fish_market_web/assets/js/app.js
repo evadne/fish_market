@@ -82,6 +82,16 @@ window.addEventListener("phx:chat-input-clear", (event) => {
   input.focus()
 })
 
+window.addEventListener("phx:chat-input-focus", (event) => {
+  const inputId = event.detail?.input_id
+  if (typeof inputId !== "string" || inputId.length === 0) return
+
+  const input = document.getElementById(inputId)
+  if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return
+
+  input.focus()
+})
+
 const syncSystemDarkMode = () => {
   if (!localStorage.getItem(darkModeStorageKey)) {
     applyDarkMode("system")

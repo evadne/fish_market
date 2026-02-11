@@ -47,14 +47,25 @@ defmodule FishMarketWeb.MenuLive do
   end
 
   @impl true
-  def handle_info({:openclaw_ui, :select_session, session_key}, socket) do
-    socket = select_session(socket, session_key)
+  def handle_info({:openclaw_ui, :select_session, session_key}, socket)
+      when is_binary(session_key) and session_key != "" do
+    session_known? = has_session_key?(socket.assigns.sessions, session_key)
 
-    if has_session_key?(socket.assigns.sessions, session_key) do
+    socket =
+      socket
+      |> select_session(session_key)
+      |> ensure_session_placeholder(session_key)
+
+    if session_known? do
       {:noreply, socket}
     else
-      {:noreply, load_sessions(socket) |> select_session(session_key)}
+      {:noreply, maybe_schedule_refresh(socket)}
     end
+  end
+
+  @impl true
+  def handle_info({:openclaw_ui, :select_session, _session_key}, socket) do
+    {:noreply, socket}
   end
 
   @impl true
@@ -211,6 +222,7 @@ defmodule FishMarketWeb.MenuLive do
           |> assign(:sessions_loading?, false)
           |> assign(:sessions_error, nil)
           |> assign(:selected_session_key, next_selected)
+          |> ensure_session_placeholder(next_selected)
           |> prune_unread_sessions(sessions)
 
         if is_binary(next_selected) and next_selected != previous_selected do
@@ -246,16 +258,32 @@ defmodule FishMarketWeb.MenuLive do
     |> update(:unread_session_keys, &MapSet.delete(&1, session_key))
   end
 
-  defp resolve_selected_session_key([], _previous), do: nil
-
-  defp resolve_selected_session_key(sessions, previous_selected)
-       when is_binary(previous_selected) do
-    if has_session_key?(sessions, previous_selected) do
-      previous_selected
+  defp ensure_session_placeholder(socket, session_key) when is_binary(session_key) do
+    if has_session_key?(socket.assigns.sessions, session_key) do
+      socket
     else
-      sessions |> List.first() |> session_key()
+      placeholder_session = %{
+        "key" => session_key,
+        "label" => "New session",
+        "displayName" => "New session",
+        "kind" => "direct",
+        "updatedAt" => System.system_time(:millisecond)
+      }
+
+      update(socket, :sessions, fn sessions -> [placeholder_session | sessions] end)
     end
   end
+
+  defp ensure_session_placeholder(socket, _session_key), do: socket
+
+  defp resolve_selected_session_key([], previous_selected) when is_binary(previous_selected),
+    do: previous_selected
+
+  defp resolve_selected_session_key([], _previous), do: nil
+
+  defp resolve_selected_session_key(_sessions, previous_selected)
+       when is_binary(previous_selected),
+       do: previous_selected
 
   defp resolve_selected_session_key(sessions, _previous) do
     sessions |> List.first() |> session_key()

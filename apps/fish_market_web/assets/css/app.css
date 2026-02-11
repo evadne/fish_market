@@ -97,7 +97,9 @@ Disabled daisyUI configuration kept for reference:
 @custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
 
 @theme {
-  --default-font-family: "Inter";
+  --default-font-family:
+    "Inter", "Noto Sans", "Noto Sans SC", "Noto Sans TC", "Noto Sans JP", "Noto Sans KR",
+    sans-serif;
   --spacing-8xl: 90rem;
   --spacing-9xl: 105rem;
   --spacing-10xl: 120rem;

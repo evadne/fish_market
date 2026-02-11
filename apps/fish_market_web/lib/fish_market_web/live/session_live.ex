@@ -21,6 +21,8 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:assistant_pending?, false)
       |> assign(:streaming_text, nil)
       |> assign(:streaming_run_id, nil)
+      |> assign(:pending_session_key, nil)
+      |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
 
@@ -52,61 +54,53 @@ defmodule FishMarketWeb.SessionLive do
         {:noreply, assign(socket, :can_send_message?, false)}
 
       is_nil(socket.assigns.selected_session_key) ->
-        {:noreply, assign(socket, :send_error, "Select a session before sending a message.")}
+        new_session_key = build_new_session_key(nil)
+        enqueue_session_creation(new_session_key)
+        OpenClaw.broadcast_selection(new_session_key)
+
+        {:noreply,
+         socket
+         |> initialize_new_session(new_session_key)
+         |> append_local_user_message(message)
+         |> update(:queued_messages, fn messages -> messages ++ [message] end)
+         |> clear_compose()
+         |> assign(:send_error, nil)}
 
       true ->
         selected_session_key = socket.assigns.selected_session_key
         socket = append_local_user_message(socket, message)
 
-        case OpenClaw.chat_send(selected_session_key, message) do
-          {:ok, _payload} ->
-            socket =
-              socket
-              |> assign(:send_error, nil)
-              |> assign(:can_send_message?, false)
-              |> assign(:form, to_form(%{"message" => ""}, as: :chat))
-              |> push_event("chat-input-clear", %{input_id: "chat-message-input"})
+        if pending_session?(socket, selected_session_key) do
+          {:noreply,
+           socket
+           |> update(:queued_messages, fn messages -> messages ++ [message] end)
+           |> clear_compose()
+           |> assign(:send_error, nil)}
+        else
+          case OpenClaw.chat_send(selected_session_key, message) do
+            {:ok, _payload} ->
+              {:noreply,
+               socket
+               |> clear_compose()
+               |> assign(:send_error, nil)}
 
-            {:noreply, socket}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :send_error, format_reason(reason))}
+            {:error, reason} ->
+              {:noreply, assign(socket, :send_error, format_reason(reason))}
+          end
         end
     end
   end
 
   @impl true
   def handle_event("new-session", _params, socket) do
-    current_session_key = socket.assigns.selected_session_key
+    new_session_key = build_new_session_key(socket.assigns.selected_session_key)
+    enqueue_session_creation(new_session_key)
+    OpenClaw.broadcast_selection(new_session_key)
 
-    cond do
-      not is_binary(current_session_key) ->
-        {:noreply, assign(socket, :send_error, "Select a session before starting a new one.")}
-
-      true ->
-        new_session_key = build_new_session_key(current_session_key)
-
-        case OpenClaw.sessions_patch(new_session_key) do
-          {:ok, _payload} ->
-            OpenClaw.broadcast_selection(new_session_key)
-
-            {:noreply,
-             socket
-             |> assign(:selected_session_key, new_session_key)
-             |> assign(:send_error, nil)
-             |> assign(:streaming_text, nil)
-             |> assign(:streaming_run_id, nil)
-             |> assign(:assistant_pending?, false)
-             |> assign(:can_send_message?, false)
-             |> assign(:history_messages, [])
-             |> assign(:form, to_form(%{"message" => ""}, as: :chat))
-             |> stream(:messages, [], reset: true)
-             |> request_history_load(new_session_key)}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :send_error, format_reason(reason))}
-        end
-    end
+    {:noreply,
+     socket
+     |> initialize_new_session(new_session_key)
+     |> push_event("chat-input-focus", %{input_id: "chat-message-input"})}
   end
 
   @impl true
@@ -135,6 +129,8 @@ defmodule FishMarketWeb.SessionLive do
        |> assign(:assistant_pending?, false)
        |> assign(:streaming_text, nil)
        |> assign(:streaming_run_id, nil)
+       |> assign(:pending_session_key, nil)
+       |> assign(:queued_messages, [])
        |> assign(:form, to_form(%{"message" => ""}, as: :chat))
        |> stream(:messages, [], reset: true)
        |> request_history_load(session_key)}
@@ -163,12 +159,55 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
+  def handle_info({:new_session_created, session_key, result}, socket) do
+    had_queued_messages? = socket.assigns.queued_messages != []
+
+    socket =
+      if socket.assigns.pending_session_key == session_key do
+        assign(socket, :pending_session_key, nil)
+      else
+        socket
+      end
+
+    socket =
+      case result do
+        {:ok, _payload} ->
+          socket
+
+        {:error, reason} ->
+          assign(socket, :send_error, "Failed to create session: #{format_reason(reason)}")
+      end
+
+    socket =
+      if socket.assigns.selected_session_key == session_key do
+        socket = flush_queued_messages(socket, session_key)
+
+        if had_queued_messages? do
+          socket
+        else
+          request_history_load(socket, session_key)
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:openclaw_gateway, :connected, _payload}, socket) do
-    if is_binary(socket.assigns.selected_session_key) do
-      {:noreply, request_history_load(socket, socket.assigns.selected_session_key)}
-    else
-      {:noreply, socket}
-    end
+    selected_session_key = socket.assigns.selected_session_key
+
+    socket =
+      if is_binary(selected_session_key) do
+        socket
+        |> flush_queued_messages(selected_session_key)
+        |> request_history_load(selected_session_key)
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -249,7 +288,7 @@ defmodule FishMarketWeb.SessionLive do
             id="header-new-session-button"
             type="button"
             phx-click="new-session"
-            class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm leading-5 font-semibold text-gray-800 hover:border-gray-300 hover:text-gray-900 hover:shadow-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600 dark:hover:text-gray-200"
+            class="inline-flex items-center justify-center rounded-lg border border-purple-700 bg-purple-700 px-3 py-2 text-sm leading-5 font-semibold text-purple-50 hover:border-purple-600 hover:bg-purple-600 focus:outline-hidden focus:ring-3 focus:ring-purple-500/50"
           >
             New Session
           </button>
@@ -279,7 +318,12 @@ defmodule FishMarketWeb.SessionLive do
                   Session
                 </h2>
                 <p id="session-subtitle" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {session_subtitle(@selected_session_key, @history_loading?, @history_error)}
+                  {session_subtitle(
+                    @selected_session_key,
+                    @history_loading?,
+                    @history_error,
+                    @pending_session_key
+                  )}
                 </p>
               </div>
 
@@ -584,17 +628,85 @@ defmodule FishMarketWeb.SessionLive do
 
   defp apply_agent_event(socket, _payload), do: socket
 
+  defp pending_session?(socket, session_key) do
+    is_binary(session_key) and socket.assigns.pending_session_key == session_key
+  end
+
+  defp initialize_new_session(socket, new_session_key) when is_binary(new_session_key) do
+    socket
+    |> assign(:selected_session_key, new_session_key)
+    |> assign(:pending_session_key, new_session_key)
+    |> assign(:send_error, nil)
+    |> assign(:history_error, nil)
+    |> assign(:history_loading?, false)
+    |> assign(:history_request_id, nil)
+    |> assign(:streaming_text, nil)
+    |> assign(:streaming_run_id, nil)
+    |> assign(:assistant_pending?, false)
+    |> assign(:can_send_message?, false)
+    |> assign(:history_messages, [])
+    |> assign(:queued_messages, [])
+    |> assign(:form, to_form(%{"message" => ""}, as: :chat))
+    |> stream(:messages, [], reset: true)
+  end
+
+  defp clear_compose(socket) do
+    socket
+    |> assign(:can_send_message?, false)
+    |> assign(:form, to_form(%{"message" => ""}, as: :chat))
+    |> push_event("chat-input-clear", %{input_id: "chat-message-input"})
+  end
+
+  defp enqueue_session_creation(session_key) when is_binary(session_key) do
+    liveview_pid = self()
+
+    Task.start(fn ->
+      result = OpenClaw.sessions_patch(session_key)
+      send(liveview_pid, {:new_session_created, session_key, result})
+    end)
+  end
+
+  defp flush_queued_messages(socket, session_key) when is_binary(session_key) do
+    messages = socket.assigns.queued_messages
+
+    {sent_messages, error_reason} =
+      Enum.reduce_while(messages, {[], nil}, fn message, {sent, _error} ->
+        case OpenClaw.chat_send(session_key, message) do
+          {:ok, _payload} ->
+            {:cont, {[message | sent], nil}}
+
+          {:error, reason} ->
+            {:halt, {Enum.reverse(sent), reason}}
+        end
+      end)
+
+    remaining_messages = Enum.drop(messages, length(sent_messages))
+    socket = assign(socket, :queued_messages, remaining_messages)
+
+    if is_nil(error_reason),
+      do: socket,
+      else: assign(socket, :send_error, format_reason(error_reason))
+  end
+
   defp active_session_label(nil), do: "No session selected"
   defp active_session_label(session_key), do: session_key
 
-  defp session_subtitle(nil, _loading?, _error),
+  defp session_subtitle(nil, _loading?, _error, _pending_session_key),
     do: "Pick a session from the menu to inspect history."
 
-  defp session_subtitle(_session_key, true, _error), do: "Loading session history..."
+  defp session_subtitle(session_key, _loading?, _error, pending_session_key)
+       when is_binary(session_key) and session_key == pending_session_key do
+    "Preparing new session..."
+  end
 
-  defp session_subtitle(_session_key, _loading?, error) when is_binary(error), do: error
+  defp session_subtitle(_session_key, true, _error, _pending_session_key),
+    do: "Loading session history..."
 
-  defp session_subtitle(session_key, _loading?, _error) do
+  defp session_subtitle(_session_key, _loading?, error, _pending_session_key)
+       when is_binary(error),
+       do: error
+
+  defp session_subtitle(session_key, _loading?, _error, _pending_session_key) do
     "Streaming updates for #{session_key}"
   end
 
@@ -687,7 +799,12 @@ defmodule FishMarketWeb.SessionLive do
 
   defp contains_trace_content?(_), do: false
 
-  defp build_new_session_key(current_session_key) do
+  defp build_new_session_key(nil) do
+    unique_suffix = Integer.to_string(System.unique_integer([:positive, :monotonic]))
+    "agent:main:session-#{unique_suffix}"
+  end
+
+  defp build_new_session_key(current_session_key) when is_binary(current_session_key) do
     unique_suffix = Integer.to_string(System.unique_integer([:positive, :monotonic]))
 
     case String.split(current_session_key, ":", parts: 3) do
@@ -701,7 +818,7 @@ defmodule FishMarketWeb.SessionLive do
         "agent:#{agent_id}:#{base_slug}-#{unique_suffix}"
 
       _ ->
-        "session:#{unique_suffix}"
+        "agent:main:session-#{unique_suffix}"
     end
   end
 
