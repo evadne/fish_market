@@ -324,6 +324,30 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
+  def handle_event("delete-session", %{"session_key" => session_key}, socket)
+      when is_binary(session_key) and session_key != "" do
+    case OpenClaw.sessions_delete(session_key, %{"deleteTranscript" => true}) do
+      {:ok, %{"ok" => true}} ->
+        socket =
+          socket
+          |> put_flash(:info, "Deleted session #{session_key}")
+          |> assign(:pending_session_key, nil)
+          |> maybe_clear_deleted_session_selection(session_key)
+
+        socket =
+          socket
+          |> assign(:sessions_error, nil)
+          |> load_menu_sessions()
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(socket, :error, "Failed to delete session: #{format_reason(reason)}")}
+    end
+  end
+
+  @impl true
   def handle_info(:load_menu_sessions, socket) do
     load_menu_sessions(socket)
     |> (&{:noreply, &1}).()
@@ -637,6 +661,16 @@ defmodule FishMarketWeb.SessionLive do
         :none
     end
   end
+
+  defp maybe_clear_deleted_session_selection(socket, deleted_key) when is_binary(deleted_key) do
+    if socket.assigns.selected_session_key == deleted_key do
+      clear_session_selection(socket)
+    else
+      socket
+    end
+  end
+
+  defp maybe_clear_deleted_session_selection(socket, _deleted_key), do: socket
 
   defp session_updated_at(%{"updatedAt" => value}), do: normalize_unix_timestamp(value)
 

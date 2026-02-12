@@ -35,6 +35,12 @@ defmodule FishMarket.OpenClaw do
     request("sessions.list", Map.merge(defaults, params))
   end
 
+  @spec sessions_delete(String.t(), map()) :: {:ok, term()} | {:error, error_reason()}
+  def sessions_delete(session_key, params \\ %{})
+      when is_binary(session_key) and is_map(params) do
+    request("sessions.delete", Map.put(params, "key", session_key))
+  end
+
   @spec sessions_patch(String.t(), map()) :: {:ok, term()} | {:error, error_reason()}
   def sessions_patch(session_key, patch \\ %{}) when is_binary(session_key) and is_map(patch) do
     request("sessions.patch", Map.put(patch, "key", session_key))

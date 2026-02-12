@@ -65,34 +65,38 @@
           No active sessions yet.
         </div>
 
-        <.link
+        <div
           :for={session <- @sessions}
           id={"menu-session-" <> session_dom_id(session_key(session))}
-          patch={session_path(session_key(session))}
-          phx-click="menu-select-session"
-          phx-value-session_key={session_key(session)}
           class={[
-            "group flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm font-medium active:border-gray-600",
+            "group flex w-full items-stretch justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left",
             @selected_session_key == session_key(session) && "bg-gray-700/75 text-white",
             @selected_session_key != session_key(session) &&
               "text-gray-200 hover:bg-gray-700/75 hover:text-white"
           ]}
         >
-          <span class="flex min-w-0 grow flex-col">
-            <span class="truncate">{session_label(session)}</span>
-            <span class="mt-0.5 block truncate text-xs text-gray-500">
-              {session_key(session)}
-            </span>
-            <span
-              class="inline-flex items-center gap-1 truncate text-[10px] text-gray-500 session-updated-at"
-              data-session-updated-at={updated_at(session)}
-            >
-              <.icon name="hero-clock" class="size-3 shrink-0 align-middle" />
-              <span class="truncate leading-[1.2] session-updated-at-text">
-                {session_updated_at_label(session)}
+          <.link
+            patch={session_path(session_key(session))}
+            phx-click="menu-select-session"
+            phx-value-session_key={session_key(session)}
+            class="min-w-0 grow focus-visible:outline-hidden"
+          >
+            <span class="flex min-w-0 grow flex-col">
+              <span class="truncate">{session_label(session)}</span>
+              <span class="mt-0.5 block truncate text-xs text-gray-500">
+                {session_key(session)}
+              </span>
+              <span
+                class="inline-flex items-center gap-1 truncate text-[10px] text-gray-500 session-updated-at"
+                data-session-updated-at={updated_at(session)}
+              >
+                <.icon name="hero-clock" class="size-3 shrink-0 align-middle" />
+                <span class="truncate leading-[1.2] session-updated-at-text">
+                  {session_updated_at_label(session)}
+                </span>
               </span>
             </span>
-          </span>
+          </.link>
 
           <span class="flex flex-none items-center gap-2">
             <span class="rounded-md border border-gray-700 px-1.5 py-0.5 text-[10px] leading-4 text-gray-400">
@@ -106,7 +110,19 @@
               new
             </span>
           </span>
-        </.link>
+
+          <button
+            type="button"
+            class="ml-2 inline-flex items-center rounded-md border border-red-700/70 bg-red-900/20 px-2 py-1 text-xs text-red-100 hover:border-red-500 hover:bg-red-500/20"
+            phx-click="delete-session"
+            phx-value-session_key={session_key(session)}
+            phx-value-session_label={session_label(session)}
+            data-confirm={"Delete session \"#{session_label(session)}\"? Archives transcript if present."}
+            aria-label={"Delete session #{session_label(session)}"}
+          >
+            <.icon name="hero-trash" class="size-4" />
+          </button>
+        </div>
       </nav>
     </div>
   </div>
