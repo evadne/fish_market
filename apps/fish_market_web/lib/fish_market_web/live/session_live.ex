@@ -856,25 +856,23 @@ defmodule FishMarketWeb.SessionLive do
         case state_value do
           "delta" ->
             message = map_get(payload, "message")
-            text = Message.extract_text(message)
             thinking_text = extract_message_thinking_text(message)
 
             socket
             |> assign(:assistant_pending?, true)
             |> assign(:streaming_run_id, run_id || tracked_run_id)
-            |> maybe_assign_streaming_content(:streaming_text, text)
+            |> apply_assistant_streaming_text_update(payload)
             |> maybe_assign_streaming_content(:streaming_thinking_text, thinking_text)
 
           "final" ->
             message = map_get(payload, "message")
-            final_text = Message.extract_text(message)
             thinking_text = extract_message_thinking_text(message)
 
             socket =
               socket
               |> assign(:assistant_pending?, true)
               |> assign(:streaming_run_id, run_id || tracked_run_id)
-              |> maybe_assign_streaming_content(:streaming_text, final_text)
+              |> apply_assistant_streaming_text_update(payload)
               |> maybe_assign_streaming_content(:streaming_thinking_text, thinking_text)
 
             request_history_load(socket, session_key)
@@ -1980,6 +1978,62 @@ defmodule FishMarketWeb.SessionLive do
 
   defp maybe_assign_streaming_thinking(socket, _payload, _run_id, _stream), do: socket
 
+  defp apply_assistant_streaming_text_update(socket, payload) when is_map(payload) do
+    case extract_assistant_streaming_text_update(payload) do
+      {:append, text} ->
+        append_streaming_content(socket, :streaming_text, text)
+
+      {:replace, text} ->
+        replace_streaming_content(socket, :streaming_text, text)
+
+      _ ->
+        socket
+    end
+  end
+
+  defp apply_assistant_streaming_text_update(socket, _payload), do: socket
+
+  defp extract_assistant_streaming_text_update(payload) when is_map(payload) do
+    data = map_get(payload, "data")
+    message = map_get(payload, "message")
+
+    case extract_streaming_delta_text(data) do
+      delta when is_binary(delta) ->
+        {:append, delta}
+
+      _ ->
+        case extract_streaming_snapshot_text(data, message) do
+          snapshot when is_binary(snapshot) -> {:replace, snapshot}
+          _ -> nil
+        end
+    end
+  end
+
+  defp extract_assistant_streaming_text_update(_payload), do: nil
+
+  defp extract_streaming_delta_text(data) when is_map(data) do
+    data
+    |> map_get("delta")
+    |> non_empty_binary()
+  end
+
+  defp extract_streaming_delta_text(_data), do: nil
+
+  defp extract_streaming_snapshot_text(data, message) do
+    extract_streaming_snapshot_text_from_data(data) || Message.extract_text(message)
+  end
+
+  defp extract_streaming_snapshot_text_from_data(data) when is_map(data) do
+    non_empty_binary(map_get(data, "text")) ||
+      map_get(data, "message")
+      |> Message.extract_text()
+  end
+
+  defp extract_streaming_snapshot_text_from_data(_data), do: nil
+
+  defp non_empty_binary(value) when is_binary(value) and value != "", do: value
+  defp non_empty_binary(_value), do: nil
+
   defp extract_streaming_thinking_update(payload, stream)
        when is_map(payload) and is_binary(stream) do
     data = map_get(payload, "data")
@@ -2052,6 +2106,20 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp append_streaming_content(socket, _key, _text), do: socket
+
+  defp replace_streaming_content(socket, key, text)
+       when is_atom(key) and is_binary(text) and text != "" do
+    current_text = Map.get(socket.assigns, key)
+    incoming = normalize_line_endings(text)
+
+    if incoming == current_text do
+      socket
+    else
+      assign(socket, key, incoming)
+    end
+  end
+
+  defp replace_streaming_content(socket, _key, _text), do: socket
 
   defp maybe_assign_streaming_content(socket, key, text)
        when is_atom(key) and is_binary(text) and text != "" do

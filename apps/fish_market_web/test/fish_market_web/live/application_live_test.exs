@@ -150,6 +150,26 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#session-streaming-message", "Hello world")
   end
 
+  test "chat explicit deltas append and snapshots replace", %{conn: conn} do
+    session_key = "agent:main:fm-chat-delta-mode"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => true})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(view.pid, {:openclaw_event, "chat", chat_delta_payload(session_key, "run-1", "Good ")})
+    send(view.pid, {:openclaw_event, "chat", chat_delta_payload(session_key, "run-1", "data")})
+
+    assert has_element?(view, "#session-streaming-message", "Good data")
+
+    send(
+      view.pid,
+      {:openclaw_event, "chat", chat_payload(session_key, "run-1", "Good data. Snapshot")}
+    )
+
+    assert has_element?(view, "#session-streaming-message", "Good data. Snapshot")
+    refute has_element?(view, "#session-streaming-message", "Good dataGood data")
+  end
+
   defp thinking_payload(session_key, run_id, delta_text, key \\ "delta") do
     %{
       "sessionKey" => session_key,
@@ -187,6 +207,15 @@ defmodule FishMarketWeb.ApplicationLiveTest do
         "role" => "assistant",
         "content" => [%{"type" => "text", "text" => text}]
       }
+    }
+  end
+
+  defp chat_delta_payload(session_key, run_id, delta) do
+    %{
+      "sessionKey" => session_key,
+      "runId" => run_id,
+      "state" => "delta",
+      "data" => %{"delta" => delta}
     }
   end
 end
