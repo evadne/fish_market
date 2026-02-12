@@ -95,7 +95,6 @@
                   <.form
                     for={@label_form}
                     id="session-label-form"
-                    phx-change="change-session-label"
                     class="w-56 [&_.fieldset]:mb-0"
                   >
                     <.input
@@ -104,6 +103,7 @@
                       type="text"
                       placeholder="Session label"
                       disabled={is_nil(@selected_session_key)}
+                      phx-blur="change-session-label"
                       class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                     />
                   </.form>

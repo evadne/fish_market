@@ -281,30 +281,35 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
-  def handle_event("change-session-label", %{"session_label" => %{"label" => raw_label}}, socket)
-      when is_binary(raw_label) do
-    session_key = socket.assigns.selected_session_key
+  def handle_event("change-session-label", params, socket) do
+    raw_label = extract_label_param(params)
 
-    if is_binary(session_key) do
-      label = String.trim(raw_label)
-      label_patch = if label == "", do: nil, else: label
+    if is_binary(raw_label) do
+      session_key = socket.assigns.selected_session_key
 
-      if current_session_label(socket) == label_patch do
-        {:noreply, socket}
-      else
-        case OpenClaw.sessions_patch(session_key, %{"label" => label_patch}) do
-          {:ok, _payload} ->
-            socket
-            |> optimistic_update_session_label(session_key, label_patch)
-            |> sync_session_controls()
-            |> maybe_schedule_menu_refresh()
-            |> (&{:noreply, &1}).()
+      if is_binary(session_key) do
+        label = String.trim(raw_label)
+        label_patch = if label == "", do: nil, else: label
 
-          {:error, reason} ->
-            socket
-            |> put_flash(:error, "Failed to change session label: #{format_reason(reason)}")
-            |> (&{:noreply, &1}).()
+        if current_session_label(socket) == label_patch do
+          {:noreply, socket}
+        else
+          case OpenClaw.sessions_patch(session_key, %{"label" => label_patch}) do
+            {:ok, _payload} ->
+              socket
+              |> optimistic_update_session_label(session_key, label_patch)
+              |> sync_session_controls()
+              |> maybe_schedule_menu_refresh()
+              |> (&{:noreply, &1}).()
+
+            {:error, reason} ->
+              socket
+              |> put_flash(:error, "Failed to change session label: #{format_reason(reason)}")
+              |> (&{:noreply, &1}).()
+          end
         end
+      else
+        {:noreply, socket}
       end
     else
       {:noreply, socket}
@@ -1393,6 +1398,13 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp selected_session_label(_session), do: nil
+
+  defp extract_label_param(%{"session_label" => %{"label" => raw_label}})
+       when is_binary(raw_label),
+       do: raw_label
+
+  defp extract_label_param(%{"value" => raw_label}) when is_binary(raw_label), do: raw_label
+  defp extract_label_param(_params), do: nil
 
   defp selected_session_thinking_level(session) when is_map(session) do
     map_string(session, "thinkingLevel") || ""
