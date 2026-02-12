@@ -67,17 +67,20 @@ defmodule FishMarketWeb.SessionLive do
   def handle_params(params, _uri, socket) do
     case normalize_session_selection(params) do
       :none ->
-        {:noreply, maybe_select_first_session(socket)}
+        maybe_select_first_session(socket)
+        |> (&{:noreply, &1}).()
 
       :invalid ->
-        {:noreply, reject_session_selection(socket, "Invalid session URL")}
+        reject_session_selection(socket, "Invalid session URL")
+        |> (&{:noreply, &1}).()
 
       {:ok, session_key} ->
         if selectable_session?(socket, session_key) do
-          {:noreply, select_session(socket, session_key)}
+          select_session(socket, session_key)
         else
-          {:noreply, reject_session_selection(socket, "Session not found")}
+          reject_session_selection(socket, "Session not found")
         end
+        |> (&{:noreply, &1}).()
     end
   end
 
@@ -85,10 +88,10 @@ defmodule FishMarketWeb.SessionLive do
   def handle_event("compose-message", %{"chat" => %{"message" => raw_message}}, socket) do
     can_send_message? = String.trim(raw_message) != ""
 
-    {:noreply,
-     socket
-     |> assign(:can_send_message?, can_send_message?)
-     |> assign(:form, to_form(%{"message" => raw_message}, as: :chat))}
+    socket
+    |> assign(:can_send_message?, can_send_message?)
+    |> assign(:form, to_form(%{"message" => raw_message}, as: :chat))
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
@@ -97,31 +100,33 @@ defmodule FishMarketWeb.SessionLive do
 
     cond do
       message == "" ->
-        {:noreply, assign(socket, :can_send_message?, false)}
+        socket
+        |> assign(:can_send_message?, false)
+        |> (&{:noreply, &1}).()
 
       is_nil(socket.assigns.selected_session_key) ->
         new_session_key = build_new_session_key(nil)
         enqueue_session_creation(new_session_key)
 
-        {:noreply,
-         socket
-         |> initialize_new_session(new_session_key)
-         |> append_local_user_message(message)
-         |> update(:queued_messages, fn messages -> messages ++ [message] end)
-         |> clear_compose()
-         |> assign(:send_error, nil)
-         |> push_patch(to: session_path(new_session_key))}
+        socket
+        |> initialize_new_session(new_session_key)
+        |> append_local_user_message(message)
+        |> update(:queued_messages, fn messages -> messages ++ [message] end)
+        |> clear_compose()
+        |> assign(:send_error, nil)
+        |> push_patch(to: session_path(new_session_key))
+        |> (&{:noreply, &1}).()
 
       true ->
         selected_session_key = socket.assigns.selected_session_key
 
         if pending_session?(socket, selected_session_key) do
-          {:noreply,
-           socket
-           |> append_local_user_message(message)
-           |> update(:queued_messages, fn messages -> messages ++ [message] end)
-           |> clear_compose()
-           |> assign(:send_error, nil)}
+          socket
+          |> append_local_user_message(message)
+          |> update(:queued_messages, fn messages -> messages ++ [message] end)
+          |> clear_compose()
+          |> assign(:send_error, nil)
+          |> (&{:noreply, &1}).()
         else
           case validate_selected_session_for_send(selected_session_key) do
             :ok ->
@@ -136,17 +141,21 @@ defmodule FishMarketWeb.SessionLive do
                     "timestamp" => System.system_time(:millisecond)
                   })
 
-                  {:noreply,
-                   socket
-                   |> clear_compose()
-                   |> assign(:send_error, nil)}
+                  socket
+                  |> clear_compose()
+                  |> assign(:send_error, nil)
+                  |> (&{:noreply, &1}).()
 
                 {:error, reason} ->
-                  {:noreply, assign(socket, :send_error, format_reason(reason))}
+                  socket
+                  |> assign(:send_error, format_reason(reason))
+                  |> (&{:noreply, &1}).()
               end
 
             {:error, reason} ->
-              {:noreply, assign(socket, :send_error, reason)}
+              socket
+              |> assign(:send_error, reason)
+              |> (&{:noreply, &1}).()
           end
         end
     end
@@ -157,11 +166,11 @@ defmodule FishMarketWeb.SessionLive do
     new_session_key = build_new_session_key(socket.assigns.selected_session_key)
     enqueue_session_creation(new_session_key)
 
-    {:noreply,
-     socket
-     |> initialize_new_session(new_session_key)
-     |> push_event("chat-input-focus", %{input_id: "chat-message-input"})
-     |> push_patch(to: session_path(new_session_key))}
+    socket
+    |> initialize_new_session(new_session_key)
+    |> push_event("chat-input-focus", %{input_id: "chat-message-input"})
+    |> push_patch(to: session_path(new_session_key))
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
@@ -169,23 +178,25 @@ defmodule FishMarketWeb.SessionLive do
     show_traces? = not socket.assigns.show_traces?
     visible_messages = visible_messages(socket.assigns.history_messages, show_traces?)
 
-    {:noreply,
-     socket
-     |> assign(:show_traces?, show_traces?)
-     |> stream(:messages, visible_messages, reset: true)
-     |> sync_no_messages_state()
-     |> push_event("set-show-traces", %{enabled: show_traces?})}
+    socket
+    |> assign(:show_traces?, show_traces?)
+    |> stream(:messages, visible_messages, reset: true)
+    |> sync_no_messages_state()
+    |> push_event("set-show-traces", %{enabled: show_traces?})
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_event("menu-select-session", %{"session_key" => session_key}, socket)
       when is_binary(session_key) and session_key != "" do
-    {:noreply, select_session(socket, session_key)}
+    select_session(socket, session_key)
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info(:load_menu_sessions, socket) do
-    {:noreply, load_menu_sessions(socket)}
+    load_menu_sessions(socket)
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
@@ -203,10 +214,11 @@ defmodule FishMarketWeb.SessionLive do
   @impl true
   def handle_info({:history_loaded, session_key, request_id, result}, socket) do
     if stale_history_response?(socket, session_key, request_id) do
-      {:noreply, socket}
+      socket
     else
-      {:noreply, apply_history_result(socket, result)}
+      apply_history_result(socket, result)
     end
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
@@ -242,7 +254,8 @@ defmodule FishMarketWeb.SessionLive do
         socket
       end
 
-    {:noreply, socket}
+    socket
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
@@ -258,306 +271,47 @@ defmodule FishMarketWeb.SessionLive do
         maybe_select_first_session(socket)
       end
 
-    {:noreply, maybe_schedule_menu_refresh(socket)}
+    maybe_schedule_menu_refresh(socket)
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
-    {:noreply,
-     socket
-     |> assign(:history_error, "Gateway disconnected")
-     |> assign(:sessions_error, "Gateway disconnected")
-     |> sync_no_messages_state()}
+    socket
+    |> assign(:history_error, "Gateway disconnected")
+    |> assign(:sessions_error, "Gateway disconnected")
+    |> sync_no_messages_state()
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info({:openclaw_local_user_message, payload}, socket) do
-    {:noreply, socket |> apply_local_user_message(payload) |> sync_no_messages_state()}
+    socket
+    |> apply_local_user_message(payload)
+    |> sync_no_messages_state()
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info({:openclaw_event, "chat", payload}, socket) do
-    {:noreply,
-     socket
-     |> apply_menu_chat_event(payload)
-     |> apply_chat_event(payload)
-     |> sync_no_messages_state()}
+    socket
+    |> apply_menu_chat_event(payload)
+    |> apply_chat_event(payload)
+    |> sync_no_messages_state()
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info({:openclaw_event, "agent", payload}, socket) do
-    {:noreply, socket |> apply_agent_event(payload) |> sync_no_messages_state()}
+    socket
+    |> apply_agent_event(payload)
+    |> sync_no_messages_state()
+    |> (&{:noreply, &1}).()
   end
 
   @impl true
   def handle_info({:openclaw_event, _event, _payload}, socket) do
     {:noreply, socket}
-  end
-
-  @impl true
-  def render(assigns) do
-    ~H"""
-    <Layouts.app flash={@flash}>
-      <div id="application-live" class="bg-gray-100 dark:bg-gray-900 dark:text-gray-100">
-        <div
-          id="page-container"
-          class="mx-auto flex min-h-dvh w-full min-w-80 flex-col bg-gray-100 lg:pl-64 dark:bg-gray-900 dark:text-gray-100"
-        >
-          <.live_component
-            module={FishMarketWeb.MenuLive}
-            id="menu-live"
-            sessions={@sessions}
-            sessions_loading?={@sessions_loading?}
-            sessions_error={@sessions_error}
-            selected_session_key={@selected_session_key}
-            unread_session_keys={@unread_session_keys}
-          />
-
-          <button
-            id="page-overlay"
-            type="button"
-            class="fixed inset-0 z-40 hidden bg-gray-900/70 lg:hidden"
-            data-sidebar-overlay
-            aria-label="Close navigation"
-          >
-          </button>
-
-          <header
-            id="page-header"
-            class="fixed top-0 right-0 left-0 z-30 flex h-16 flex-none items-center bg-white shadow-xs lg:pl-64 dark:bg-gray-800"
-          >
-            <div class="mx-auto flex w-full max-w-10xl justify-between px-4 lg:px-8">
-              <div class="flex items-center gap-2">
-                <div class="hidden lg:block">
-                  <button
-                    id="sidebar-desktop-toggle"
-                    type="button"
-                    class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm leading-5 font-semibold text-gray-800 hover:border-gray-300 hover:text-gray-900 hover:shadow-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600 dark:hover:text-gray-200"
-                    data-sidebar-desktop-toggle
-                    aria-label="Toggle sidebar"
-                  >
-                    <.icon name="hero-bars-3" class="size-5" />
-                  </button>
-                </div>
-
-                <div class="lg:hidden">
-                  <button
-                    id="sidebar-mobile-open"
-                    type="button"
-                    class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm leading-5 font-semibold text-gray-800 hover:border-gray-300 hover:text-gray-900 hover:shadow-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600 dark:hover:text-gray-200"
-                    data-sidebar-open
-                    aria-label="Open sidebar"
-                  >
-                    <.icon name="hero-bars-3" class="size-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-2">
-                <button
-                  id="header-new-session-button"
-                  type="button"
-                  phx-click="new-session"
-                  class="inline-flex items-center justify-center rounded-lg border border-purple-700 bg-purple-700 px-3 py-2 text-sm leading-5 font-semibold text-purple-50 hover:border-purple-600 hover:bg-purple-600 focus:outline-hidden focus:ring-3 focus:ring-purple-500/50"
-                >
-                  New Session
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <main id="page-content" class="mt-16 flex h-[calc(100dvh-4rem)] max-w-full flex-col">
-            <div class="mx-auto flex min-h-0 w-full max-w-10xl flex-1 flex-col p-4 lg:p-8">
-              <section
-                id="session-content"
-                class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs dark:border-gray-700 dark:bg-gray-800"
-              >
-                <div class="border-b border-gray-200 px-4 py-3 dark:border-gray-700 lg:px-6">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <h2
-                        id="session-title"
-                        class="text-sm font-semibold text-gray-900 dark:text-gray-100"
-                      >
-                        Session
-                      </h2>
-                      <p id="session-subtitle" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {session_subtitle(
-                          @selected_session_key,
-                          @history_loading?,
-                          @history_error,
-                          @pending_session_key
-                        )}
-                      </p>
-                    </div>
-
-                    <button
-                      id="session-traces-toggle"
-                      type="button"
-                      phx-click="toggle-traces"
-                      class={[
-                        "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold",
-                        @show_traces? &&
-                          "border-purple-700 bg-purple-700 text-purple-50 hover:border-purple-600 hover:bg-purple-600",
-                        not @show_traces? &&
-                          "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-gray-500 dark:hover:bg-gray-800"
-                      ]}
-                    >
-                      <.icon name="hero-information-circle-mini" class="size-4" />
-                      <span>Traces</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  id="session-messages-wrapper"
-                  phx-hook="AutoScrollMessages"
-                  class="min-h-0 flex-1 overflow-y-auto bg-gray-50 px-4 py-4 dark:bg-gray-900/30 lg:px-6"
-                >
-                  <div
-                    :if={@history_loading?}
-                    id="session-history-loading"
-                    class="mb-3 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
-                  >
-                    <span class="inline-block size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600 dark:border-gray-600 dark:border-t-purple-400">
-                    </span>
-                    <span>Loading history...</span>
-                  </div>
-
-                  <div
-                    :if={@history_error}
-                    id="session-history-error"
-                    class="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
-                  >
-                    {@history_error}
-                  </div>
-
-                  <div
-                    :if={@show_no_messages_state?}
-                    id="session-messages-empty-state"
-                    class="flex min-h-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 py-64 text-gray-400 dark:border-gray-700 dark:bg-gray-800"
-                  >
-                    No Messages
-                  </div>
-
-                  <div
-                    :if={not @show_no_messages_state?}
-                    id="session-messages"
-                    class="space-y-3"
-                  >
-                    <div id="session-messages-stream" phx-update="stream" class="space-y-3">
-                      <article
-                        :for={{id, message} <- @streams.messages}
-                        id={id}
-                        class={[
-                          "max-w-3xl rounded-lg border px-4 py-3 text-sm",
-                          message.role == "user" &&
-                            "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100",
-                          message.role != "user" &&
-                            "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-                        ]}
-                      >
-                        <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                          <span class="font-semibold uppercase tracking-wide">{message.role}</span>
-                          <span class="font-medium">
-                            {message.timestamp_label || "time unavailable"}
-                          </span>
-                        </div>
-                        <div class="break-words">{render_message_text(message.text)}</div>
-                      </article>
-                    </div>
-
-                    <article
-                      :if={
-                        is_binary(@selected_session_key) and @show_traces? and
-                          is_binary(@streaming_thinking_text) and @streaming_thinking_text != ""
-                      }
-                      id="session-streaming-thinking"
-                      class="mr-auto max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-gray-900 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-gray-100"
-                    >
-                      <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                        <span class="font-semibold uppercase tracking-wide">thinking</span>
-                        <span class="font-medium">streaming...</span>
-                      </div>
-                      <div class="break-words">{render_message_text(@streaming_thinking_text)}</div>
-                    </article>
-
-                    <article
-                      :if={
-                        is_binary(@selected_session_key) and
-                          (@assistant_pending? or @streaming_text)
-                      }
-                      id="session-streaming-message"
-                      class="mr-auto max-w-3xl rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
-                    >
-                      <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                        <span class="font-semibold uppercase tracking-wide">assistant</span>
-                        <span class="font-medium">streaming...</span>
-                      </div>
-                      <div class="break-words">{render_message_text(@streaming_text)}</div>
-                      <div
-                        :if={not (is_binary(@streaming_text) and @streaming_text != "")}
-                        class="inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
-                      >
-                        <span class="inline-block size-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600 dark:border-gray-600 dark:border-t-purple-400">
-                        </span>
-                        <span>Assistant is thinking...</span>
-                      </div>
-                    </article>
-                  </div>
-                </div>
-
-                <div class="border-t border-gray-200 px-4 py-4 dark:border-gray-700 lg:px-6">
-                  <.form
-                    for={@form}
-                    id="chat-message-form"
-                    phx-change="compose-message"
-                    phx-submit="send-message"
-                    class="flex items-end gap-3"
-                  >
-                    <div class="min-w-0 flex-1 [&_.fieldset]:mb-0">
-                      <.input
-                        field={@form[:message]}
-                        id="chat-message-input"
-                        type="textarea"
-                        rows="1"
-                        phx-hook="ChatComposer"
-                        placeholder="Send a message to this session"
-                        class="block min-h-10 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm leading-5 text-gray-900 placeholder-gray-400 focus:border-purple-500 focus:ring-3 focus:ring-purple-500/50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder-gray-400"
-                      />
-                    </div>
-
-                    <button
-                      id="chat-send-button"
-                      type="submit"
-                      disabled={!@can_send_message?}
-                      class={[
-                        "inline-flex h-10 items-center justify-center rounded-lg border px-4 text-sm font-semibold",
-                        @can_send_message? &&
-                          "border-purple-700 bg-purple-700 text-purple-50 hover:border-purple-600 hover:bg-purple-600",
-                        not @can_send_message? &&
-                          "cursor-not-allowed border-gray-300 bg-gray-200 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500"
-                      ]}
-                    >
-                      Send
-                    </button>
-                  </.form>
-
-                  <p
-                    :if={@send_error}
-                    id="chat-send-error"
-                    class="mt-2 text-xs text-red-600 dark:text-red-400"
-                  >
-                    {@send_error}
-                  </p>
-                </div>
-              </section>
-            </div>
-          </main>
-        </div>
-      </div>
-    </Layouts.app>
-    """
   end
 
   defp normalize_session_selection(%{"session_id" => session_id})
@@ -698,12 +452,7 @@ defmodule FishMarketWeb.SessionLive do
     end
   end
 
-  defp session_updated_at(session) when is_map(session) do
-    session
-    |> map_get("updatedAt")
-    |> normalize_unix_timestamp()
-    |> Kernel.||(0)
-  end
+  defp session_updated_at(%{"updatedAt" => value}), do: normalize_unix_timestamp(value)
 
   defp session_updated_at(_session), do: 0
 
