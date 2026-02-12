@@ -405,10 +405,13 @@ defmodule FishMarketWeb.SessionLive do
     socket =
       if is_binary(selected_session_key) do
         socket
+        |> assign(:sessions_error, nil)
         |> flush_queued_messages(selected_session_key)
         |> request_history_load(selected_session_key)
       else
-        maybe_select_first_session(socket)
+        socket
+        |> assign(:sessions_error, nil)
+        |> maybe_select_first_session()
       end
 
     socket
@@ -612,7 +615,10 @@ defmodule FishMarketWeb.SessionLive do
   defp normalize_unix_timestamp(_), do: nil
 
   defp load_menu_sessions(socket) do
-    socket = assign(socket, :sessions_loading?, true)
+    socket =
+      socket
+      |> assign(:sessions_loading?, true)
+      |> assign(:sessions_error, nil)
 
     case OpenClaw.sessions_list(%{"includeGlobal" => true, "includeUnknown" => true}) do
       {:ok, %{"sessions" => sessions}} when is_list(sessions) ->
