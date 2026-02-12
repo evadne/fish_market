@@ -69,6 +69,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:thinking_select_options, [])
       |> assign(:model_form, to_form(%{"model" => ""}, as: :session_model))
       |> assign(:thinking_form, to_form(%{"thinking_level" => ""}, as: :session_thinking))
+      |> assign(:label_form, to_form(%{"label" => ""}, as: :session_label))
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
       |> sync_no_messages_state()
@@ -273,6 +274,37 @@ defmodule FishMarketWeb.SessionLive do
           socket
           |> put_flash(:error, "Failed to change thinking level: #{format_reason(reason)}")
           |> (&{:noreply, &1}).()
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("change-session-label", %{"session_label" => %{"label" => raw_label}}, socket)
+      when is_binary(raw_label) do
+    session_key = socket.assigns.selected_session_key
+
+    if is_binary(session_key) do
+      label = String.trim(raw_label)
+      label_patch = if label == "", do: nil, else: label
+
+      if current_session_label(socket) == label_patch do
+        {:noreply, socket}
+      else
+        case OpenClaw.sessions_patch(session_key, %{"label" => label_patch}) do
+          {:ok, _payload} ->
+            socket
+            |> optimistic_update_session_label(session_key, label_patch)
+            |> sync_session_controls()
+            |> maybe_schedule_menu_refresh()
+            |> (&{:noreply, &1}).()
+
+          {:error, reason} ->
+            socket
+            |> put_flash(:error, "Failed to change session label: #{format_reason(reason)}")
+            |> (&{:noreply, &1}).()
+        end
       end
     else
       {:noreply, socket}
@@ -1309,6 +1341,10 @@ defmodule FishMarketWeb.SessionLive do
       :thinking_form,
       to_form(%{"thinking_level" => selected_thinking_display}, as: :session_thinking)
     )
+    |> assign(
+      :label_form,
+      to_form(%{"label" => selected_session_label(selected_session) || ""}, as: :session_label)
+    )
   end
 
   defp selected_session(socket) do
@@ -1343,6 +1379,18 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp selected_session_model_id(_session), do: nil
+
+  defp current_session_label(socket) when is_map(socket.assigns) do
+    socket
+    |> selected_session()
+    |> selected_session_label()
+  end
+
+  defp selected_session_label(session) when is_map(session) do
+    Map.get(session, "label")
+  end
+
+  defp selected_session_label(_session), do: nil
 
   defp selected_session_thinking_level(session) when is_map(session) do
     map_string(session, "thinkingLevel") || ""
@@ -1555,6 +1603,23 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp optimistic_update_session_thinking(socket, _session_key, _thinking_level), do: socket
+
+  defp optimistic_update_session_label(socket, session_key, label) when is_binary(session_key) do
+    update_session_entry(socket, session_key, fn session ->
+      session
+      |> maybe_set_session_label(label)
+      |> Map.put("updatedAt", System.system_time(:millisecond))
+    end)
+  end
+
+  defp optimistic_update_session_label(socket, _session_key, _label), do: socket
+
+  defp maybe_set_session_label(session, value) when is_map(session) and is_binary(value) do
+    Map.put(session, "label", value)
+  end
+
+  defp maybe_set_session_label(session, _value) when is_map(session),
+    do: Map.delete(session, "label")
 
   defp update_session_entry(socket, session_key, updater)
        when is_binary(session_key) and is_function(updater, 1) do

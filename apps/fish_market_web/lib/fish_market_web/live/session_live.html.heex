@@ -93,6 +93,22 @@
                 </div>
                 <div class="flex items-center gap-2">
                   <.form
+                    for={@label_form}
+                    id="session-label-form"
+                    phx-change="change-session-label"
+                    class="w-56 [&_.fieldset]:mb-0"
+                  >
+                    <.input
+                      field={@label_form[:label]}
+                      id="session-label-input"
+                      type="text"
+                      placeholder="Session label"
+                      disabled={is_nil(@selected_session_key)}
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                    />
+                  </.form>
+
+                  <.form
                     for={@model_form}
                     id="session-model-form"
                     phx-change="change-session-model"
