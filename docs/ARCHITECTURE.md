@@ -59,6 +59,9 @@ Configured in `config/runtime.exs` (except test):
 - `chat_history/2`
 - `chat_send/3`
 
+Gateway client connect metadata advertises `caps: ["tool-events"]` so OpenClaw can route live
+tool stream events to Fish Market connections.
+
 And PubSub helpers for subscription/broadcast.
 
 ### PubSub topology
@@ -106,6 +109,8 @@ Route definition:
 - Render live streaming assistant output.
 - Render tool events as trace messages.
 - Toggle trace visibility and persist preference via cookie-backed connect params.
+- When traces are enabled for a session, request `sessions.patch` with `verboseLevel: "on"` so
+  OpenClaw emits tool event streams for that session.
 
 ## Front-End JS Responsibilities
 

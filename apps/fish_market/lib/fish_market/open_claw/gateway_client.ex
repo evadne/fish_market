@@ -418,7 +418,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
       },
       "role" => "operator",
       "scopes" => ["operator.admin"],
-      "caps" => [],
+      "caps" => ["tool-events"],
       "commands" => [],
       "permissions" => %{},
       "auth" => if(map_size(auth) == 0, do: nil, else: auth),

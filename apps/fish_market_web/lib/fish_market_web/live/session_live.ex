@@ -177,12 +177,14 @@ defmodule FishMarketWeb.SessionLive do
   def handle_event("toggle-traces", _params, socket) do
     show_traces? = not socket.assigns.show_traces?
     visible_messages = visible_messages(socket.assigns.history_messages, show_traces?)
+    selected_session_key = socket.assigns.selected_session_key
 
     socket
     |> assign(:show_traces?, show_traces?)
     |> stream(:messages, visible_messages, reset: true)
     |> sync_no_messages_state()
     |> push_event("set-show-traces", %{enabled: show_traces?})
+    |> ensure_session_verbose_for_traces(show_traces?, selected_session_key)
     |> (&{:noreply, &1}).()
   end
 
@@ -346,6 +348,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [], reset: true)
+      |> ensure_session_verbose_for_traces(socket.assigns.show_traces?, session_key)
       |> request_history_load(session_key)
     end
   end
@@ -1353,6 +1356,19 @@ defmodule FishMarketWeb.SessionLive do
       not (is_binary(streaming_text) and streaming_text != "") and
       not (is_binary(streaming_thinking_text) and streaming_thinking_text != "")
   end
+
+  defp ensure_session_verbose_for_traces(socket, show_traces?, session_key)
+       when is_boolean(show_traces?) and is_binary(session_key) and session_key != "" do
+    if show_traces? do
+      Task.start(fn ->
+        _ = OpenClaw.sessions_patch(session_key, %{"verboseLevel" => "on"})
+      end)
+    end
+
+    socket
+  end
+
+  defp ensure_session_verbose_for_traces(socket, _show_traces?, _session_key), do: socket
 
   defp initial_show_traces_preference(socket) do
     if connected?(socket) do
