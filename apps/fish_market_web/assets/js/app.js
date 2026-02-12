@@ -394,6 +394,83 @@ const ChatComposer = {
   },
 }
 
+const SessionRelativeTimestamps = {
+  mounted() {
+    this.formatter = new Intl.RelativeTimeFormat(navigator.language || "en-US", {
+      numeric: "auto",
+    })
+    this.handle = null
+
+    this.updateTimestamps = () => {
+      const nodes = this.el.querySelectorAll("[data-session-updated-at]")
+      const nowMs = Date.now()
+
+      let minimumNextDelay = 300_000
+
+      nodes.forEach((node) => {
+        const value = Number(node.dataset.sessionUpdatedAt)
+        const textNode = node.querySelector(".session-updated-at-text")
+        if (!textNode) return
+
+        if (!Number.isFinite(value) || value <= 0) {
+          textNode.textContent = "time unavailable"
+          return
+        }
+
+        const diffMs = value - nowMs
+        const seconds = Math.round(diffMs / 1000)
+        const absSeconds = Math.abs(seconds)
+
+        let unit
+        let magnitude
+        let nextDelay = 300_000
+
+        if (absSeconds < 60) {
+          unit = "second"
+          magnitude = seconds
+          nextDelay = 1_000
+        } else if (absSeconds < 3600) {
+          unit = "minute"
+          magnitude = Math.round(seconds / 60)
+          nextDelay = 60_000
+        } else if (absSeconds < 86_400) {
+          unit = "hour"
+          magnitude = Math.round(seconds / 3600)
+          nextDelay = 60_000
+        } else {
+          unit = "day"
+          magnitude = Math.round(seconds / 86_400)
+          nextDelay = 300_000
+        }
+
+        textNode.textContent = this.formatter.format(magnitude, unit)
+        minimumNextDelay = Math.min(minimumNextDelay, nextDelay)
+      })
+
+      if (nodes.length > 0 && minimumNextDelay > 0) {
+        this.handle = window.setTimeout(this.updateTimestamps, minimumNextDelay)
+      }
+    }
+
+    this.updateTimestamps()
+  },
+
+  updated() {
+    if (this.handle) {
+      window.clearTimeout(this.handle)
+      this.handle = null
+    }
+    this.updateTimestamps()
+  },
+
+  destroyed() {
+    if (this.handle) {
+      window.clearTimeout(this.handle)
+      this.handle = null
+    }
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -401,7 +478,12 @@ const liveSocket = new LiveSocket("/live", Socket, {
     _csrf_token: csrfToken,
     show_traces: readShowTracesPreference(),
   }),
-  hooks: {...colocatedHooks, AutoScrollMessages, ChatComposer},
+  hooks: {
+    ...colocatedHooks,
+    AutoScrollMessages,
+    ChatComposer,
+    SessionRelativeTimestamps,
+  },
 })
 
 // Show progress bar on live navigation and form submits

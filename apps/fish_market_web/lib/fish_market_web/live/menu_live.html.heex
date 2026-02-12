@@ -35,7 +35,12 @@
         Sessions
       </div>
 
-      <nav id="menu-sessions-list" class="space-y-1" aria-label="Session Navigation">
+      <nav
+        id="menu-sessions-list"
+        phx-hook="SessionRelativeTimestamps"
+        class="space-y-1"
+        aria-label="Session Navigation"
+      >
         <div
           :if={@sessions_loading?}
           id="menu-sessions-loading"
@@ -75,9 +80,17 @@
         >
           <span class="flex min-w-0 grow flex-col">
             <span class="truncate">{session_label(session)}</span>
-            <span class="truncate text-xs text-gray-500">{session_key(session)}</span>
-            <span class="truncate text-[10px] text-gray-500">
-              {session_updated_at_label(session)}
+            <span class="mt-0.5 block truncate text-xs text-gray-500">
+              {session_key(session)}
+            </span>
+            <span
+              class="inline-flex items-center gap-1 truncate text-[10px] text-gray-500 session-updated-at"
+              data-session-updated-at={updated_at(session)}
+            >
+              <.icon name="hero-clock" class="size-3 shrink-0 align-middle" />
+              <span class="truncate leading-[1.2] session-updated-at-text">
+                {session_updated_at_label(session)}
+              </span>
             </span>
           </span>
 
