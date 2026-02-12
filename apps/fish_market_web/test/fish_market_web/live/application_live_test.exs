@@ -27,4 +27,36 @@ defmodule FishMarketWeb.ApplicationLiveTest do
   test "rejects malformed session route token", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/session/k-YWdlbnQ6bWFpbjp")
   end
+
+  test "shows streaming thinking chunks only when traces are enabled", %{conn: conn} do
+    session_key = "agent:main:fm-thinking-test"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => false})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(view.pid, {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "step 1")})
+    visible_before_toggle? = has_element?(view, "#session-streaming-thinking")
+
+    render_click(element(view, "#session-traces-toggle"))
+
+    send(view.pid, {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "step 2")})
+    visible_after_toggle? = has_element?(view, "#session-streaming-thinking")
+    assert visible_before_toggle? != visible_after_toggle?
+
+    send(
+      view.pid,
+      {:openclaw_event, "agent", thinking_payload("agent:main:other", "run-1", "skip")}
+    )
+
+    assert has_element?(view, "#session-streaming-thinking") == visible_after_toggle?
+  end
+
+  defp thinking_payload(session_key, run_id, delta_text) do
+    %{
+      "sessionKey" => session_key,
+      "stream" => "thinking",
+      "runId" => run_id,
+      "data" => %{"delta" => delta_text}
+    }
+  end
 end

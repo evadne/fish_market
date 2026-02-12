@@ -103,8 +103,7 @@ defmodule FishMarket.OpenClaw do
     message =
       {:openclaw_local_user_message,
        payload
-       |> Map.put_new("sessionKey", session_key)
-       |> Map.put_new(:sessionKey, session_key)}
+       |> Map.put_new("sessionKey", session_key)}
 
     Phoenix.PubSub.broadcast(@pubsub, @chat_topic, message)
     Phoenix.PubSub.broadcast(@pubsub, session_topic(session_key), message)

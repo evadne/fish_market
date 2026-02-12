@@ -36,6 +36,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:history_messages, [])
       |> assign(:assistant_pending?, false)
       |> assign(:streaming_text, nil)
+      |> assign(:streaming_thinking_text, nil)
       |> assign(:streaming_run_id, nil)
       |> assign(:pending_session_key, nil)
       |> assign(:queued_messages, [])
@@ -462,9 +463,24 @@ defmodule FishMarketWeb.SessionLive do
                             {message.timestamp_label || "time unavailable"}
                           </span>
                         </div>
-                        <div class="whitespace-pre-wrap break-words">{message.text}</div>
+                        <div class="break-words">{render_message_text(message.text)}</div>
                       </article>
                     </div>
+
+                    <article
+                      :if={
+                        is_binary(@selected_session_key) and @show_traces? and
+                          is_binary(@streaming_thinking_text) and @streaming_thinking_text != ""
+                      }
+                      id="session-streaming-thinking"
+                      class="mr-auto max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-gray-900 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-gray-100"
+                    >
+                      <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                        <span class="font-semibold uppercase tracking-wide">thinking</span>
+                        <span class="font-medium">streaming...</span>
+                      </div>
+                      <div class="break-words">{render_message_text(@streaming_thinking_text)}</div>
+                    </article>
 
                     <article
                       :if={
@@ -478,7 +494,7 @@ defmodule FishMarketWeb.SessionLive do
                         <span class="font-semibold uppercase tracking-wide">assistant</span>
                         <span class="font-medium">streaming...</span>
                       </div>
-                      <div class="whitespace-pre-wrap break-words">{@streaming_text}</div>
+                      <div class="break-words">{render_message_text(@streaming_text)}</div>
                       <div
                         :if={not (is_binary(@streaming_text) and @streaming_text != "")}
                         class="inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
@@ -686,7 +702,6 @@ defmodule FishMarketWeb.SessionLive do
     session
     |> map_get("updatedAt")
     |> normalize_unix_timestamp()
-    |> Kernel.||(session |> map_get(:updatedAt) |> normalize_unix_timestamp())
     |> Kernel.||(0)
   end
 
@@ -749,7 +764,7 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp apply_menu_chat_event(socket, payload) when is_map(payload) do
-    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
+    session_key = map_string(payload, "sessionKey")
 
     if is_binary(session_key) do
       socket =
@@ -759,7 +774,7 @@ defmodule FishMarketWeb.SessionLive do
           update(socket, :unread_session_keys, &MapSet.put(&1, session_key))
         end
 
-      state_value = map_string(payload, "state") || map_string(payload, :state) || ""
+      state_value = map_string(payload, "state") || ""
       session_missing? = not has_session_key?(socket.assigns.sessions, session_key)
 
       if session_missing? or MapSet.member?(@menu_refresh_states, state_value) do
@@ -913,11 +928,11 @@ defmodule FishMarketWeb.SessionLive do
   defp apply_local_user_message(socket, _payload), do: socket
 
   defp apply_chat_event(socket, payload) when is_map(payload) do
-    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
+    session_key = map_string(payload, "sessionKey")
 
     if socket.assigns.selected_session_key == session_key do
-      state_value = map_string(payload, "state") || map_string(payload, :state) || ""
-      run_id = map_string(payload, "runId") || map_string(payload, :runId)
+      state_value = map_string(payload, "state") || ""
+      run_id = map_string(payload, "runId")
       tracked_run_id = socket.assigns.streaming_run_id
 
       run_mismatch? =
@@ -936,42 +951,27 @@ defmodule FishMarketWeb.SessionLive do
       else
         case state_value do
           "delta" ->
-            text = payload |> map_get("message") |> Message.extract_text()
+            message = map_get(payload, "message")
+            text = Message.extract_text(message)
+            thinking_text = extract_message_thinking_text(message)
 
-            socket =
-              socket
-              |> assign(:assistant_pending?, true)
-              |> assign(:streaming_run_id, run_id || tracked_run_id)
-
-            if is_binary(text) and text != "" do
-              current_text = socket.assigns.streaming_text || ""
-
-              next_text =
-                if current_text == "" or String.length(text) >= String.length(current_text) do
-                  text
-                else
-                  current_text
-                end
-
-              assign(socket, :streaming_text, next_text)
-            else
-              socket
-            end
+            socket
+            |> assign(:assistant_pending?, true)
+            |> assign(:streaming_run_id, run_id || tracked_run_id)
+            |> maybe_assign_streaming_content(:streaming_text, text)
+            |> maybe_assign_streaming_content(:streaming_thinking_text, thinking_text)
 
           "final" ->
-            final_text = payload |> map_get("message") |> Message.extract_text()
+            message = map_get(payload, "message")
+            final_text = Message.extract_text(message)
+            thinking_text = extract_message_thinking_text(message)
 
             socket =
               socket
               |> assign(:assistant_pending?, true)
               |> assign(:streaming_run_id, run_id || tracked_run_id)
-
-            socket =
-              if is_binary(final_text) and final_text != "" do
-                assign(socket, :streaming_text, final_text)
-              else
-                socket
-              end
+              |> maybe_assign_streaming_content(:streaming_text, final_text)
+              |> maybe_assign_streaming_content(:streaming_thinking_text, thinking_text)
 
             request_history_load(socket, session_key)
 
@@ -1009,9 +1009,9 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp apply_agent_event(socket, payload) when is_map(payload) do
-    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
-    stream = map_string(payload, "stream") || map_string(payload, :stream)
-    run_id = map_string(payload, "runId") || map_string(payload, :runId)
+    session_key = map_string(payload, "sessionKey")
+    stream = map_string(payload, "stream")
+    run_id = map_string(payload, "runId")
 
     if socket.assigns.selected_session_key != session_key do
       socket
@@ -1021,13 +1021,14 @@ defmodule FishMarketWeb.SessionLive do
           socket
           |> assign(:assistant_pending?, true)
           |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
+          |> maybe_assign_streaming_thinking(payload, run_id, stream)
 
         "lifecycle" ->
-          data = map_get(payload, "data") || map_get(payload, :data)
+          data = map_get(payload, "data")
 
           phase =
             if is_map(data) do
-              map_string(data, "phase") || map_string(data, :phase)
+              map_string(data, "phase")
             else
               nil
             end
@@ -1060,6 +1061,12 @@ defmodule FishMarketWeb.SessionLive do
 
         "compaction" ->
           socket
+
+        "thinking" ->
+          maybe_assign_streaming_thinking(socket, payload, run_id, stream)
+
+        "reasoning" ->
+          maybe_assign_streaming_thinking(socket, payload, run_id, stream)
 
         _ ->
           socket
@@ -1124,6 +1131,7 @@ defmodule FishMarketWeb.SessionLive do
     socket
     |> assign(:assistant_pending?, false)
     |> assign(:streaming_text, nil)
+    |> assign(:streaming_thinking_text, nil)
     |> assign(:streaming_run_id, nil)
   end
 
@@ -1148,18 +1156,18 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp build_tool_trace_message(payload) when is_map(payload) do
-    data = map_get(payload, "data") || map_get(payload, :data)
+    data = map_get(payload, "data")
 
     if is_map(data) do
-      run_id = map_string(payload, "runId") || map_string(payload, :runId) || "run"
-      sequence = map_get(payload, "seq") || map_get(payload, :seq) || "seq"
-      tool_call_id = map_string(data, "toolCallId") || map_string(data, :toolCallId)
-      phase = map_string(data, "phase") || map_string(data, :phase) || "update"
-      name = map_string(data, "name") || map_string(data, :name) || "(unnamed tool)"
-      args = map_get(data, "args") || map_get(data, :args)
-      result = map_get(data, "result") || map_get(data, :result)
-      partial_result = map_get(data, "partialResult") || map_get(data, :partialResult)
-      error = map_get(data, "error") || map_get(data, :error)
+      run_id = map_string(payload, "runId") || "run"
+      sequence = map_get(payload, "seq") || "seq"
+      tool_call_id = map_string(data, "toolCallId")
+      phase = map_string(data, "phase") || "update"
+      name = map_string(data, "name") || "(unnamed tool)"
+      args = map_get(data, "args")
+      result = map_get(data, "result")
+      partial_result = map_get(data, "partialResult")
+      error = map_get(data, "error")
 
       text =
         build_tool_trace_text(%{
@@ -1326,6 +1334,23 @@ defmodule FishMarketWeb.SessionLive do
   defp format_reason(%{message: message}) when is_binary(message), do: message
   defp format_reason(reason), do: inspect(reason)
 
+  defp render_message_text(text) when is_binary(text) do
+    text
+    |> normalize_line_endings()
+    |> Phoenix.HTML.html_escape()
+    |> Phoenix.HTML.safe_to_string()
+    |> String.replace("\n", "<br>")
+    |> Phoenix.HTML.raw()
+  end
+
+  defp render_message_text(_text), do: ""
+
+  defp normalize_line_endings(text) when is_binary(text) do
+    text
+    |> String.replace("\r\n", "\n")
+    |> String.replace("\r", "\n")
+  end
+
   defp format_timestamp_label(nil), do: "time unavailable"
 
   defp format_timestamp_label(timestamp_ms) when not is_integer(timestamp_ms),
@@ -1351,9 +1376,14 @@ defmodule FishMarketWeb.SessionLive do
   defp normalize_history_messages(messages) when is_list(messages) do
     messages
     |> Enum.with_index(1)
-    |> Enum.map(fn {message, index} ->
-      normalize_history_message(message, "history-#{index}")
+    |> Enum.flat_map(fn {message, index} ->
+      normalize_history_message_bundle(message, "history-#{index}")
     end)
+  end
+
+  defp normalize_history_message_bundle(message, id_prefix) when is_map(message) do
+    build_thinking_trace_messages(message, id_prefix) ++
+      [normalize_history_message(message, id_prefix)]
   end
 
   defp normalize_history_message(message, id_prefix) when is_map(message) do
@@ -1370,6 +1400,192 @@ defmodule FishMarketWeb.SessionLive do
     }
   end
 
+  defp build_thinking_trace_messages(message, id_prefix) when is_map(message) do
+    timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
+    content = map_get(message, "content")
+
+    if is_list(content) do
+      content
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn {part, index} ->
+        case extract_thinking_text(part) do
+          nil ->
+            []
+
+          thinking_text ->
+            [
+              %{
+                id: "#{id_prefix}-thinking-#{index}-#{message_hash(part)}",
+                role: "thinking",
+                text: truncate_trace_text(thinking_text, @tool_trace_text_limit),
+                timestamp_label: timestamp_label,
+                trace?: true
+              }
+            ]
+        end
+      end)
+    else
+      []
+    end
+  end
+
+  defp build_thinking_trace_messages(_message, _id_prefix), do: []
+
+  defp extract_thinking_text(part) when is_map(part) do
+    type = map_string(part, "type")
+
+    if is_binary(type) and String.downcase(type) == "thinking" do
+      map_string(part, "thinking") || map_string(part, "text")
+    else
+      nil
+    end
+  end
+
+  defp extract_thinking_text(_part), do: nil
+
+  defp extract_message_thinking_text(message) when is_map(message) do
+    content = map_get(message, "content")
+
+    if is_list(content) do
+      content
+      |> Enum.map(&extract_thinking_text/1)
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> nil
+        parts -> Enum.join(parts, "\n\n")
+      end
+    else
+      nil
+    end
+  end
+
+  defp extract_message_thinking_text(_message), do: nil
+
+  defp maybe_assign_streaming_thinking(socket, payload, run_id, stream)
+       when is_map(payload) and is_binary(stream) do
+    case extract_streaming_thinking_text(payload, stream) do
+      text when is_binary(text) and text != "" ->
+        socket
+        |> assign(:assistant_pending?, true)
+        |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
+        |> maybe_assign_streaming_content(:streaming_thinking_text, text)
+
+      _ ->
+        socket
+    end
+  end
+
+  defp maybe_assign_streaming_thinking(socket, _payload, _run_id, _stream), do: socket
+
+  defp extract_streaming_thinking_text(payload, stream)
+       when is_map(payload) and is_binary(stream) do
+    data = map_get(payload, "data")
+    message = map_get(payload, "message")
+
+    cond do
+      stream in ["thinking", "reasoning"] ->
+        extract_streaming_thinking_text_from_data(data, true) ||
+          extract_message_thinking_text(message)
+
+      stream == "assistant" ->
+        extract_streaming_thinking_text_from_data(data, false) ||
+          extract_message_thinking_text(message)
+
+      true ->
+        nil
+    end
+  end
+
+  defp extract_streaming_thinking_text(_payload, _stream), do: nil
+
+  defp extract_streaming_thinking_text_from_data(data, allow_text_fallback?)
+       when is_map(data) and is_boolean(allow_text_fallback?) do
+    direct =
+      map_string(data, "thinkingDelta") ||
+        map_string(data, "thinking_delta") ||
+        map_string(data, "reasoningDelta") ||
+        map_string(data, "reasoning_delta") ||
+        map_string(data, "thinking") ||
+        map_string(data, "reasoning")
+
+    cond do
+      is_binary(direct) and direct != "" ->
+        direct
+
+      true ->
+        from_message =
+          map_get(data, "message")
+          |> extract_message_thinking_text()
+
+        from_content =
+          map_get(data, "content")
+          |> case do
+            content when is_list(content) ->
+              extract_message_thinking_text(%{"content" => content})
+
+            _ ->
+              nil
+          end
+
+        from_delta =
+          if allow_text_fallback? do
+            map_string(data, "delta")
+          else
+            nil
+          end
+
+        from_text =
+          if allow_text_fallback? do
+            map_string(data, "text")
+          else
+            nil
+          end
+
+        from_message || from_content || from_delta || from_text
+    end
+  end
+
+  defp extract_streaming_thinking_text_from_data(_data, _allow_text_fallback?), do: nil
+
+  defp maybe_assign_streaming_content(socket, key, text)
+       when is_atom(key) and is_binary(text) and text != "" do
+    current_text = Map.get(socket.assigns, key)
+    next_text = merge_streaming_content(current_text, text)
+
+    if next_text == current_text or next_text == "" do
+      socket
+    else
+      assign(socket, key, next_text)
+    end
+  end
+
+  defp maybe_assign_streaming_content(socket, _key, _text), do: socket
+
+  defp merge_streaming_content(current_text, incoming_text) when is_binary(incoming_text) do
+    incoming = normalize_line_endings(incoming_text)
+    current = if is_binary(current_text), do: current_text, else: ""
+
+    cond do
+      incoming == "" ->
+        current
+
+      current == "" ->
+        incoming
+
+      String.starts_with?(incoming, current) ->
+        incoming
+
+      String.starts_with?(current, incoming) ->
+        current
+
+      String.ends_with?(current, incoming) ->
+        current
+
+      true ->
+        current <> incoming
+    end
+  end
+
   defp visible_messages(messages, show_traces?) when is_list(messages) do
     Enum.filter(messages, fn message -> show_traces? or not message.trace? end)
   end
@@ -1379,14 +1595,16 @@ defmodule FishMarketWeb.SessionLive do
          history_error,
          history_messages,
          assistant_pending?,
-         streaming_text
+         streaming_text,
+         streaming_thinking_text
        )
        when is_boolean(history_loading?) and is_list(history_messages) do
     not history_loading? and
       is_nil(history_error) and
       history_messages == [] and
       not assistant_pending? and
-      not (is_binary(streaming_text) and streaming_text != "")
+      not (is_binary(streaming_text) and streaming_text != "") and
+      not (is_binary(streaming_thinking_text) and streaming_thinking_text != "")
   end
 
   defp initial_show_traces_preference(socket) do
@@ -1414,14 +1632,15 @@ defmodule FishMarketWeb.SessionLive do
         socket.assigns.history_error,
         socket.assigns.history_messages,
         socket.assigns.assistant_pending?,
-        socket.assigns.streaming_text
+        socket.assigns.streaming_text,
+        socket.assigns.streaming_thinking_text
       )
     )
   end
 
   defp trace_message?(message, role) when is_map(message) do
     normalized_role = String.downcase(role)
-    content = map_get(message, "content") || map_get(message, :content)
+    content = map_get(message, "content")
     visible_text = Message.extract_text(message)
     has_visible_text = is_binary(visible_text) and String.trim(visible_text) != ""
     has_trace_content = contains_trace_content?(content)
@@ -1435,7 +1654,7 @@ defmodule FishMarketWeb.SessionLive do
   defp contains_trace_content?(content) when is_list(content) do
     Enum.any?(content, fn item ->
       if is_map(item) do
-        case map_string(item, "type") || map_string(item, :type) do
+        case map_string(item, "type") do
           value when is_binary(value) ->
             String.downcase(value) in [
               "thinking",
@@ -1504,7 +1723,7 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp session_key_value(session) when is_map(session) do
-    map_string(session, "key") || map_string(session, :key)
+    map_string(session, "key")
   end
 
   defp map_get(map, key) when is_map(map), do: Map.get(map, key)
