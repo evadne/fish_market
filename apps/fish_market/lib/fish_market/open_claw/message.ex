@@ -35,17 +35,39 @@ defmodule FishMarket.OpenClaw.Message do
     case extract_text(message) do
       text when is_binary(text) ->
         if String.trim(text) == "" do
-          summarize_non_text(message)
+          assistant_error_message(message) || summarize_non_text(message)
         else
           text
         end
 
       _ ->
-        summarize_non_text(message)
+        assistant_error_message(message) || summarize_non_text(message)
     end
   end
 
   def preview_text(_), do: "(non-text message)"
+
+  @spec assistant_error?(term()) :: boolean()
+  def assistant_error?(%{
+        "role" => "assistant",
+        "stopReason" => "error",
+        "errorMessage" => error_message
+      })
+      when is_binary(error_message) and error_message != "",
+      do: true
+
+  def assistant_error?(_), do: false
+
+  @spec assistant_error_message(term()) :: String.t() | nil
+  def assistant_error_message(%{
+        "role" => "assistant",
+        "stopReason" => "error",
+        "errorMessage" => error_message
+      })
+      when is_binary(error_message) and error_message != "",
+      do: error_message
+
+  def assistant_error_message(_), do: nil
 
   @spec role(term()) :: String.t()
   def role(message) when is_map(message) do

@@ -19,4 +19,20 @@ defmodule FishMarket.OpenClaw.MessageTest do
     assert Message.extract_text(message) == ""
     assert Message.preview_text(message) == "tool call: exec"
   end
+
+  test "preview_text returns raw assistant error message when present" do
+    error_json =
+      "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"},\"request_id\":\"req_123\"}"
+
+    message = %{
+      "role" => "assistant",
+      "stopReason" => "error",
+      "errorMessage" => error_json,
+      "content" => []
+    }
+
+    assert Message.assistant_error?(message)
+    assert Message.assistant_error_message(message) == error_json
+    assert Message.preview_text(message) == error_json
+  end
 end

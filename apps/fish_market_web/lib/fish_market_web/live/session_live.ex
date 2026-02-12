@@ -1588,6 +1588,8 @@ defmodule FishMarketWeb.SessionLive do
   defp format_reason(%{message: message}) when is_binary(message), do: message
   defp format_reason(reason), do: inspect(reason)
 
+  defp message_role_label(%{error?: true}), do: "assistant error"
+
   defp message_role_label(%{role: role}) when is_binary(role) do
     case String.downcase(role) do
       value when value in ["toolcall", "tool_call"] -> "tool call"
@@ -1597,6 +1599,26 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp message_role_label(_message), do: "assistant"
+
+  defp message_container_class(%{error?: true}) do
+    "mr-auto border-red-300 bg-red-50 text-red-900 dark:border-red-800/60 dark:bg-red-950/30 dark:text-red-100"
+  end
+
+  defp message_container_class(%{role: "user"}) do
+    "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100"
+  end
+
+  defp message_container_class(%{role: role}) when is_binary(role) do
+    if String.downcase(role) == "user" do
+      message_container_class(%{role: "user"})
+    else
+      "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+    end
+  end
+
+  defp message_container_class(_message) do
+    "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+  end
 
   defp tool_trace_message?(message) when is_map(message) do
     is_binary(Map.get(message, :tool_name))
@@ -1830,13 +1852,15 @@ defmodule FishMarketWeb.SessionLive do
   defp normalize_history_message(message, id_prefix) when is_map(message) do
     timestamp_ms = Message.timestamp_ms(message)
     role = Message.role(message)
-    text = Message.preview_text(message)
+    error_message = Message.assistant_error_message(message)
+    text = error_message || Message.preview_text(message)
 
     %{
       id: "#{id_prefix}-#{message_hash(message)}",
       role: role,
       text: text,
       timestamp_label: format_timestamp_label(timestamp_ms),
+      error?: Message.assistant_error?(message),
       trace?: trace_message?(message, role)
     }
   end

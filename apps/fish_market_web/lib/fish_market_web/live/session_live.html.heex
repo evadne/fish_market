@@ -180,10 +180,7 @@
                     id={id}
                     class={[
                       "max-w-3xl rounded-lg border px-4 py-3 text-sm",
-                      message.role == "user" &&
-                        "ml-auto border-purple-200 bg-purple-50 text-gray-900 dark:border-purple-800/60 dark:bg-purple-900/30 dark:text-gray-100",
-                      message.role != "user" &&
-                        "mr-auto border-gray-200 bg-white text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                      message_container_class(message)
                     ]}
                   >
                     <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
