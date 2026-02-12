@@ -105,7 +105,7 @@
                         class="mt-1 text-xs text-gray-500 dark:text-gray-400"
                       >
                         {session_subtitle(
-                          @selected_session_key,
+                          @selected_session,
                           @history_loading?,
                           @history_error,
                           @pending_session_key
@@ -115,6 +115,55 @@
                   </summary>
 
                   <div class="absolute left-0 top-full z-30 mt-1 min-w-44 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                    <div class="border-b border-gray-200 p-3 dark:border-gray-700">
+                      <.form
+                        for={@label_form}
+                        id="session-menu-label-form"
+                        class="mb-2 w-full [&_.fieldset]:mb-0"
+                      >
+                        <.input
+                          field={@label_form[:label]}
+                          id="session-menu-label-input"
+                          type="text"
+                          placeholder="Session label"
+                          disabled={is_nil(@selected_session_key)}
+                          phx-blur="change-session-label"
+                          class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                        />
+                      </.form>
+
+                      <.form
+                        for={@model_form}
+                        id="session-menu-model-form"
+                        phx-change="change-session-model"
+                        class="mb-2 w-full [&_.fieldset]:mb-0"
+                      >
+                        <.input
+                          field={@model_form[:model]}
+                          id="session-menu-model-select"
+                          type="select"
+                          options={@model_select_options}
+                          disabled={is_nil(@selected_session_key) or @models_loading?}
+                          class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                        />
+                      </.form>
+
+                      <.form
+                        for={@thinking_form}
+                        id="session-menu-thinking-form"
+                        phx-change="change-session-thinking"
+                        class="mb-2 w-full [&_.fieldset]:mb-0"
+                      >
+                        <.input
+                          field={@thinking_form[:thinking_level]}
+                          id="session-menu-thinking-select"
+                          type="select"
+                          options={@thinking_select_options}
+                          disabled={is_nil(@selected_session_key)}
+                          class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                        />
+                      </.form>
+                    </div>
                     <button
                       type="button"
                       phx-click="delete-session"
@@ -137,54 +186,6 @@
                   </div>
                 </details>
                 <div class="flex items-center gap-2">
-                  <.form
-                    for={@label_form}
-                    id="session-label-form"
-                    class="w-56 [&_.fieldset]:mb-0"
-                  >
-                    <.input
-                      field={@label_form[:label]}
-                      id="session-label-input"
-                      type="text"
-                      placeholder="Session label"
-                      disabled={is_nil(@selected_session_key)}
-                      phx-blur="change-session-label"
-                      class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-                    />
-                  </.form>
-
-                  <.form
-                    for={@model_form}
-                    id="session-model-form"
-                    phx-change="change-session-model"
-                    class="w-64 [&_.fieldset]:mb-0"
-                  >
-                    <.input
-                      field={@model_form[:model]}
-                      id="session-model-select"
-                      type="select"
-                      options={@model_select_options}
-                      disabled={is_nil(@selected_session_key) or @models_loading?}
-                      class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-                    />
-                  </.form>
-
-                  <.form
-                    for={@thinking_form}
-                    id="session-thinking-form"
-                    phx-change="change-session-thinking"
-                    class="w-36 [&_.fieldset]:mb-0"
-                  >
-                    <.input
-                      field={@thinking_form[:thinking_level]}
-                      id="session-thinking-select"
-                      type="select"
-                      options={@thinking_select_options}
-                      disabled={is_nil(@selected_session_key)}
-                      class="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-0 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-                    />
-                  </.form>
-
                   <button
                     id="session-traces-toggle"
                     type="button"

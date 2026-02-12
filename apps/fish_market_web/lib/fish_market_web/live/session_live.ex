@@ -70,6 +70,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:model_form, to_form(%{"model" => ""}, as: :session_model))
       |> assign(:thinking_form, to_form(%{"thinking_level" => ""}, as: :session_thinking))
       |> assign(:label_form, to_form(%{"label" => ""}, as: :session_label))
+      |> assign(:deleting_session_keys, MapSet.new())
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
       |> sync_no_messages_state()
@@ -326,24 +327,77 @@ defmodule FishMarketWeb.SessionLive do
   @impl true
   def handle_event("delete-session", %{"session_key" => session_key}, socket)
       when is_binary(session_key) and session_key != "" do
+    sessions_snapshot = socket.assigns.sessions
+    selected_snapshot = socket.assigns.selected_session_key
+
+    next_session_key =
+      adjacent_session_key_after_delete(sessions_snapshot, session_key)
+
+    sessions_without_deleted =
+      Enum.reject(sessions_snapshot, fn session ->
+        session_key_value(session) == session_key
+      end)
+
+    socket =
+      socket
+      |> put_flash(:info, "Deleting session #{session_key}...")
+      |> assign(:sessions, sessions_without_deleted)
+      |> assign(:pending_session_key, nil)
+      |> update(:deleting_session_keys, fn deleting_session_keys ->
+        MapSet.put(deleting_session_keys, session_key)
+      end)
+
+    socket =
+      if selected_snapshot == session_key do
+        if is_binary(next_session_key) do
+          socket
+          |> select_session(next_session_key)
+          |> push_patch(to: session_path(next_session_key))
+        else
+          socket
+          |> clear_session_selection()
+          |> push_patch(to: ~p"/")
+        end
+      else
+        socket
+      end
+
+    send(self(), {:session_delete_finished, session_key, sessions_snapshot, selected_snapshot})
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(
+        {:session_delete_finished, session_key, sessions_snapshot, selected_snapshot},
+        socket
+      )
+      when is_binary(session_key) do
     case OpenClaw.sessions_delete(session_key, %{"deleteTranscript" => true}) do
       {:ok, %{"ok" => true}} ->
-        socket =
-          socket
-          |> put_flash(:info, "Deleted session #{session_key}")
-          |> assign(:pending_session_key, nil)
-          |> maybe_clear_deleted_session_selection(session_key)
-
-        socket =
-          socket
-          |> assign(:sessions_error, nil)
-          |> load_menu_sessions()
-
-        {:noreply, socket}
+        {:noreply,
+         socket
+         |> update(:deleting_session_keys, fn deleting_session_keys ->
+           MapSet.delete(deleting_session_keys, session_key)
+         end)
+         |> assign(:sessions_error, nil)
+         |> maybe_schedule_menu_refresh()}
 
       {:error, reason} ->
+        socket =
+          restore_deleted_session_on_error(
+            socket,
+            session_key,
+            sessions_snapshot,
+            selected_snapshot
+          )
+
         {:noreply,
-         put_flash(socket, :error, "Failed to delete session: #{format_reason(reason)}")}
+         socket
+         |> update(:deleting_session_keys, fn deleting_session_keys ->
+           MapSet.delete(deleting_session_keys, session_key)
+         end)
+         |> put_flash(:error, "Failed to delete session: #{format_reason(reason)}")}
     end
   end
 
@@ -577,6 +631,34 @@ defmodule FishMarketWeb.SessionLive do
     |> sync_session_controls()
   end
 
+  defp restore_deleted_session_on_error(
+         socket,
+         deleted_session_key,
+         sessions_snapshot,
+         selected_snapshot
+       )
+       when is_binary(deleted_session_key) and is_list(sessions_snapshot) do
+    current_selected = socket.assigns.selected_session_key
+
+    restore_selected? =
+      is_nil(current_selected) ||
+        current_selected == deleted_session_key ||
+        current_selected == selected_snapshot
+
+    socket
+    |> assign(:sessions, sessions_snapshot)
+    |> assign(:pending_session_key, nil)
+    |> then(fn
+      socket when restore_selected? and is_binary(selected_snapshot) ->
+        socket
+        |> select_session(selected_snapshot)
+        |> push_patch(to: session_path(selected_snapshot))
+
+      socket ->
+        socket
+    end)
+  end
+
   defp reject_session_selection(socket, message) do
     socket
     |> clear_session_selection()
@@ -661,16 +743,6 @@ defmodule FishMarketWeb.SessionLive do
         :none
     end
   end
-
-  defp maybe_clear_deleted_session_selection(socket, deleted_key) when is_binary(deleted_key) do
-    if socket.assigns.selected_session_key == deleted_key do
-      clear_session_selection(socket)
-    else
-      socket
-    end
-  end
-
-  defp maybe_clear_deleted_session_selection(socket, _deleted_key), do: socket
 
   defp session_updated_at(%{"updatedAt" => value}), do: normalize_unix_timestamp(value)
 
@@ -795,16 +867,38 @@ defmodule FishMarketWeb.SessionLive do
 
   defp ensure_session_placeholder(socket, _session_key), do: socket
 
-  defp resolve_selected_session_key([], previous_selected) when is_binary(previous_selected),
-    do: previous_selected
-
   defp resolve_selected_session_key([], _previous), do: nil
 
   defp resolve_selected_session_key(_sessions, previous_selected)
-       when is_binary(previous_selected),
-       do: previous_selected
+       when is_binary(previous_selected) and previous_selected == "", do: nil
+
+  defp resolve_selected_session_key(sessions, previous_selected)
+       when is_binary(previous_selected) do
+    if has_session_key?(sessions, previous_selected), do: previous_selected, else: nil
+  end
 
   defp resolve_selected_session_key(_sessions, _previous), do: nil
+
+  defp adjacent_session_key_after_delete(sessions, deleted_key)
+       when is_list(sessions) and is_binary(deleted_key) and deleted_key != "" do
+    index = Enum.find_index(sessions, &(session_key_value(&1) == deleted_key))
+
+    case index do
+      nil ->
+        nil
+
+      0 ->
+        sessions |> Enum.at(1) |> session_key_value()
+
+      index when is_integer(index) ->
+        sessions
+        |> Enum.at(index - 1)
+        |> session_key_value()
+        |> Kernel.||(sessions |> Enum.at(index + 1) |> session_key_value())
+    end
+  end
+
+  defp adjacent_session_key_after_delete(_sessions, _deleted_key), do: nil
 
   defp prune_unread_sessions(socket, sessions) do
     valid_keys =
@@ -1365,6 +1459,7 @@ defmodule FishMarketWeb.SessionLive do
     selected_thinking_display = thinking_level_display(selected_thinking, selected_provider)
 
     socket
+    |> assign(:selected_session, selected_session)
     |> assign(
       :model_select_options,
       build_model_select_options(socket.assigns.models_catalog, selected_model_ref)
@@ -1682,24 +1777,33 @@ defmodule FishMarketWeb.SessionLive do
     end)
   end
 
-  defp session_subtitle(nil, _loading?, _error, _pending_session_key),
-    do: "Pick a session from the menu to inspect history."
-
-  defp session_subtitle(session_key, _loading?, _error, pending_session_key)
-       when is_binary(session_key) and session_key == pending_session_key do
-    "Preparing new session..."
-  end
-
-  defp session_subtitle(_session_key, true, _error, _pending_session_key),
+  defp session_subtitle(_selected_session, true, _error, _pending_session_key),
     do: "Loading session history..."
 
-  defp session_subtitle(_session_key, _loading?, error, _pending_session_key)
+  defp session_subtitle(_selected_session, _loading?, error, _pending_session_key)
        when is_binary(error),
        do: error
 
-  defp session_subtitle(session_key, _loading?, _error, _pending_session_key) do
-    "Streaming updates for #{session_key}"
+  defp session_subtitle(selected_session, _loading?, _error, _pending_session_key)
+       when is_map(selected_session) do
+    session_subtitle_label(selected_session)
   end
+
+  defp session_subtitle(nil, _loading?, _error, pending_session_key)
+       when is_binary(pending_session_key),
+       do: "Preparing new session..."
+
+  defp session_subtitle(nil, _loading?, _error, _pending_session_key),
+    do: "Pick a session from the menu to inspect history."
+
+  defp session_subtitle_label(selected_session) when is_map(selected_session) do
+    case map_string(selected_session, "displayName") do
+      nil -> map_string(selected_session, "key")
+      name -> name
+    end
+  end
+
+  defp session_subtitle_label(_selected_session), do: ""
 
   defp format_reason(%{"message" => message}) when is_binary(message), do: message
   defp format_reason(%{message: message}) when is_binary(message), do: message

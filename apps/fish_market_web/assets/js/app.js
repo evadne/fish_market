@@ -179,6 +179,14 @@ const setUserMenu = (open) => {
   userMenuToggle.setAttribute("aria-expanded", String(open))
 }
 
+const closeSessionActionMenus = () => {
+  document.querySelectorAll("[data-session-menu]").forEach((menu) => {
+    if (menu instanceof HTMLDetailsElement) {
+      menu.open = false
+    }
+  })
+}
+
 const initializeApplicationLayout = () => {
   const {container, sidebar, header, overlay, userMenu, userMenuToggle} = applicationLayoutElements()
   if (!container || !sidebar || !header) return
@@ -222,6 +230,16 @@ const handleApplicationLayoutClick = (event) => {
     return
   }
 
+  if (event.target.closest("[data-session-menu]")) {
+    if (event.target.closest("[data-session-menu-close]")) {
+      closeSessionActionMenus()
+    }
+
+    return
+  }
+
+  closeSessionActionMenus()
+
   if (!event.target.closest("[data-user-menu]")) {
     setUserMenu(false)
   }
@@ -235,6 +253,7 @@ if (!window.__fishMarketApplicationLayoutBound) {
     if (event.key === "Escape") {
       setMobileSidebar(false)
       setUserMenu(false)
+      closeSessionActionMenus()
     }
   })
 
