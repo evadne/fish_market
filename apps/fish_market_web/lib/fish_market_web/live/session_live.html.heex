@@ -55,38 +55,6 @@
           </div>
 
           <div class="flex items-center gap-2">
-            <.form
-              for={@model_form}
-              id="session-model-form"
-              phx-change="change-session-model"
-              class="w-64 [&_.fieldset]:mb-0"
-            >
-              <.input
-                field={@model_form[:model]}
-                id="session-model-select"
-                type="select"
-                options={@model_select_options}
-                disabled={is_nil(@selected_session_key) or @models_loading?}
-                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-              />
-            </.form>
-
-            <.form
-              for={@thinking_form}
-              id="session-thinking-form"
-              phx-change="change-session-thinking"
-              class="w-36 [&_.fieldset]:mb-0"
-            >
-              <.input
-                field={@thinking_form[:thinking_level]}
-                id="session-thinking-select"
-                type="select"
-                options={@thinking_select_options}
-                disabled={is_nil(@selected_session_key)}
-                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-              />
-            </.form>
-
             <button
               id="header-new-session-button"
               type="button"
@@ -123,22 +91,55 @@
                     )}
                   </p>
                 </div>
+                <div class="flex items-center gap-2">
+                  <.form
+                    for={@model_form}
+                    id="session-model-form"
+                    phx-change="change-session-model"
+                    class="w-64 [&_.fieldset]:mb-0"
+                  >
+                    <.input
+                      field={@model_form[:model]}
+                      id="session-model-select"
+                      type="select"
+                      options={@model_select_options}
+                      disabled={is_nil(@selected_session_key) or @models_loading?}
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                    />
+                  </.form>
 
-                <button
-                  id="session-traces-toggle"
-                  type="button"
-                  phx-click="toggle-traces"
-                  class={[
-                    "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold",
-                    @show_traces? &&
-                      "border-purple-700 bg-purple-700 text-purple-50 hover:border-purple-600 hover:bg-purple-600",
-                    not @show_traces? &&
-                      "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-gray-500 dark:hover:bg-gray-800"
-                  ]}
-                >
-                  <.icon name="hero-information-circle-mini" class="size-4" />
-                  <span>Traces</span>
-                </button>
+                  <.form
+                    for={@thinking_form}
+                    id="session-thinking-form"
+                    phx-change="change-session-thinking"
+                    class="w-36 [&_.fieldset]:mb-0"
+                  >
+                    <.input
+                      field={@thinking_form[:thinking_level]}
+                      id="session-thinking-select"
+                      type="select"
+                      options={@thinking_select_options}
+                      disabled={is_nil(@selected_session_key)}
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                    />
+                  </.form>
+
+                  <button
+                    id="session-traces-toggle"
+                    type="button"
+                    phx-click="toggle-traces"
+                    class={[
+                      "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold",
+                      @show_traces? &&
+                        "border-purple-700 bg-purple-700 text-purple-50 hover:border-purple-600 hover:bg-purple-600",
+                      not @show_traces? &&
+                        "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-gray-500 dark:hover:bg-gray-800"
+                    ]}
+                  >
+                    <.icon name="hero-information-circle-mini" class="size-4" />
+                    <span>Traces</span>
+                  </button>
+                </div>
               </div>
             </div>
 
