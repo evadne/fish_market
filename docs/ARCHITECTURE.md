@@ -109,6 +109,8 @@ Route definition:
 - Render live streaming assistant output.
 - Render tool events as trace messages.
 - Toggle trace visibility and persist preference via cookie-backed connect params.
+- Load `models.list` once per LiveView lifecycle and cache model options for the top-bar model picker.
+- Patch per-session model/thinking overrides via `sessions.patch` from top-bar controls.
 - When traces are enabled for a session, request `sessions.patch` with `verboseLevel: "on"` so
   OpenClaw emits tool event streams for that session.
 

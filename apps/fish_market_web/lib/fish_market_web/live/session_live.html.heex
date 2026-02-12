@@ -55,6 +55,38 @@
           </div>
 
           <div class="flex items-center gap-2">
+            <.form
+              for={@model_form}
+              id="session-model-form"
+              phx-change="change-session-model"
+              class="w-64 [&_.fieldset]:mb-0"
+            >
+              <.input
+                field={@model_form[:model]}
+                id="session-model-select"
+                type="select"
+                options={@model_select_options}
+                disabled={is_nil(@selected_session_key) or @models_loading?}
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              />
+            </.form>
+
+            <.form
+              for={@thinking_form}
+              id="session-thinking-form"
+              phx-change="change-session-thinking"
+              class="w-36 [&_.fieldset]:mb-0"
+            >
+              <.input
+                field={@thinking_form[:thinking_level]}
+                id="session-thinking-select"
+                type="select"
+                options={@thinking_select_options}
+                disabled={is_nil(@selected_session_key)}
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              />
+            </.form>
+
             <button
               id="header-new-session-button"
               type="button"

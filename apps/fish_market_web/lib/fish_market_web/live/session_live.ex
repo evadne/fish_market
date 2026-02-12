@@ -8,6 +8,27 @@ defmodule FishMarketWeb.SessionLive do
   @history_limit 200
   @menu_refresh_states MapSet.new(["final", "aborted", "error"])
   @tool_trace_text_limit 12_000
+  @think_levels ["", "off", "minimal", "low", "medium", "high"]
+  @binary_think_levels ["", "off", "on"]
+  # NOTE: Temporary compatibility shim.
+  # OpenClaw gateway `models.list` currently does not expose per-model thinking-level capabilities.
+  # `sessions.patch` enforces xhigh support server-side, so we mirror known xhigh-capable refs here
+  # to avoid presenting invalid options in the UI.
+  # TODO: Remove this hardcoded list once `models.list` exposes capabilities (e.g. thinkingLevels/supportsXHigh).
+  @xhigh_model_refs MapSet.new([
+                      "openai/gpt-5.2",
+                      "openai-codex/gpt-5.3-codex",
+                      "openai-codex/gpt-5.2-codex",
+                      "openai-codex/gpt-5.1-codex",
+                      "github-copilot/gpt-5.2-codex",
+                      "github-copilot/gpt-5.2"
+                    ])
+  @xhigh_model_ids MapSet.new([
+                     "gpt-5.2",
+                     "gpt-5.3-codex",
+                     "gpt-5.2-codex",
+                     "gpt-5.1-codex"
+                   ])
 
   @impl true
   def mount(params, _session, socket) do
@@ -40,9 +61,18 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:streaming_run_id, nil)
       |> assign(:pending_session_key, nil)
       |> assign(:queued_messages, [])
+      |> assign(:models_catalog, [])
+      |> assign(:models_catalog_loaded?, false)
+      |> assign(:models_loading?, false)
+      |> assign(:models_error, nil)
+      |> assign(:model_select_options, [])
+      |> assign(:thinking_select_options, [])
+      |> assign(:model_form, to_form(%{"model" => ""}, as: :session_model))
+      |> assign(:thinking_form, to_form(%{"thinking_level" => ""}, as: :session_thinking))
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
       |> sync_no_messages_state()
+      |> sync_session_controls()
 
     socket =
       if connected?(socket) do
@@ -50,6 +80,7 @@ defmodule FishMarketWeb.SessionLive do
         OpenClaw.subscribe_chat()
         OpenClaw.subscribe_event("agent")
         send(self(), :load_menu_sessions)
+        send(self(), :load_models_catalog)
 
         if is_binary(selected_session_key) do
           request_history_load(socket, selected_session_key)
@@ -189,6 +220,66 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
+  def handle_event("change-session-model", %{"session_model" => %{"model" => model_ref}}, socket)
+      when is_binary(model_ref) do
+    session_key = socket.assigns.selected_session_key
+    model_patch = if model_ref == "", do: nil, else: model_ref
+
+    if is_binary(session_key) do
+      case OpenClaw.sessions_patch(session_key, %{"model" => model_patch}) do
+        {:ok, _payload} ->
+          socket
+          |> optimistic_update_session_model(session_key, model_patch)
+          |> sync_session_controls()
+          |> maybe_schedule_menu_refresh()
+          |> (&{:noreply, &1}).()
+
+        {:error, reason} ->
+          socket
+          |> put_flash(:error, "Failed to change model: #{format_reason(reason)}")
+          |> (&{:noreply, &1}).()
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event(
+        "change-session-thinking",
+        %{"session_thinking" => %{"thinking_level" => thinking_level}},
+        socket
+      )
+      when is_binary(thinking_level) do
+    session_key = socket.assigns.selected_session_key
+
+    if is_binary(session_key) do
+      provider =
+        socket
+        |> selected_session()
+        |> selected_session_model_provider()
+
+      thinking_patch = normalize_thinking_patch_value(thinking_level, provider)
+
+      case OpenClaw.sessions_patch(session_key, %{"thinkingLevel" => thinking_patch}) do
+        {:ok, _payload} ->
+          socket
+          |> optimistic_update_session_thinking(session_key, thinking_patch)
+          |> sync_session_controls()
+          |> maybe_schedule_menu_refresh()
+          |> (&{:noreply, &1}).()
+
+        {:error, reason} ->
+          socket
+          |> put_flash(:error, "Failed to change thinking level: #{format_reason(reason)}")
+          |> (&{:noreply, &1}).()
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("menu-select-session", %{"session_key" => session_key}, socket)
       when is_binary(session_key) and session_key != "" do
     select_session(socket, session_key)
@@ -199,6 +290,53 @@ defmodule FishMarketWeb.SessionLive do
   def handle_info(:load_menu_sessions, socket) do
     load_menu_sessions(socket)
     |> (&{:noreply, &1}).()
+  end
+
+  @impl true
+  def handle_info(:load_models_catalog, socket) do
+    cond do
+      socket.assigns.models_catalog_loaded? ->
+        {:noreply, socket}
+
+      socket.assigns.models_loading? ->
+        {:noreply, socket}
+
+      true ->
+        liveview_pid = self()
+
+        Task.start(fn ->
+          result = OpenClaw.models_list()
+          send(liveview_pid, {:models_catalog_loaded, result})
+        end)
+
+        {:noreply, assign(socket, :models_loading?, true)}
+    end
+  end
+
+  @impl true
+  def handle_info({:models_catalog_loaded, result}, socket) do
+    socket =
+      case result do
+        {:ok, %{"models" => models}} when is_list(models) ->
+          socket
+          |> assign(:models_catalog, normalize_models_catalog(models))
+          |> assign(:models_catalog_loaded?, true)
+          |> assign(:models_loading?, false)
+          |> assign(:models_error, nil)
+          |> sync_session_controls()
+
+        {:ok, _payload} ->
+          socket
+          |> assign(:models_loading?, false)
+          |> assign(:models_error, "invalid models.list payload")
+
+        {:error, reason} ->
+          socket
+          |> assign(:models_loading?, false)
+          |> assign(:models_error, format_reason(reason))
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -273,7 +411,9 @@ defmodule FishMarketWeb.SessionLive do
         maybe_select_first_session(socket)
       end
 
-    maybe_schedule_menu_refresh(socket)
+    socket
+    |> maybe_schedule_models_catalog_load()
+    |> maybe_schedule_menu_refresh()
     |> (&{:noreply, &1}).()
   end
 
@@ -348,6 +488,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:queued_messages, [])
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [], reset: true)
+      |> sync_session_controls()
       |> ensure_session_verbose_for_traces(socket.assigns.show_traces?, session_key)
       |> request_history_load(session_key)
     end
@@ -368,6 +509,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
     |> sync_no_messages_state()
+    |> sync_session_controls()
   end
 
   defp reject_session_selection(socket, message) do
@@ -487,6 +629,7 @@ defmodule FishMarketWeb.SessionLive do
           |> clear_unread_for_selected_session(next_selected)
           |> ensure_session_placeholder(next_selected)
           |> prune_unread_sessions(sessions)
+          |> sync_session_controls()
 
         if is_nil(next_selected) do
           maybe_select_first_session(socket)
@@ -511,6 +654,15 @@ defmodule FishMarketWeb.SessionLive do
       socket
     else
       send(self(), :load_menu_sessions)
+      socket
+    end
+  end
+
+  defp maybe_schedule_models_catalog_load(socket) do
+    if socket.assigns.models_catalog_loaded? or socket.assigns.models_loading? do
+      socket
+    else
+      send(self(), :load_models_catalog)
       socket
     end
   end
@@ -870,6 +1022,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
     |> sync_no_messages_state()
+    |> sync_session_controls()
   end
 
   defp clear_compose(socket) do
@@ -1117,6 +1270,299 @@ defmodule FishMarketWeb.SessionLive do
     if is_nil(error_reason),
       do: socket,
       else: assign(socket, :send_error, format_reason(error_reason))
+  end
+
+  defp sync_session_controls(socket) do
+    selected_session = selected_session(socket)
+    selected_model_ref = selected_session_model_ref(selected_session) || ""
+
+    selected_provider =
+      model_provider_from_ref(selected_model_ref) ||
+        selected_session_model_provider(selected_session)
+
+    selected_model_id =
+      model_id_from_ref(selected_model_ref) ||
+        selected_session_model_id(selected_session)
+
+    selected_thinking = selected_session_thinking_level(selected_session)
+    selected_thinking_display = thinking_level_display(selected_thinking, selected_provider)
+
+    socket
+    |> assign(
+      :model_select_options,
+      build_model_select_options(socket.assigns.models_catalog, selected_model_ref)
+    )
+    |> assign(
+      :thinking_select_options,
+      build_thinking_select_options(
+        selected_provider,
+        selected_model_id,
+        selected_thinking_display
+      )
+    )
+    |> assign(:model_form, to_form(%{"model" => selected_model_ref}, as: :session_model))
+    |> assign(
+      :thinking_form,
+      to_form(%{"thinking_level" => selected_thinking_display}, as: :session_thinking)
+    )
+  end
+
+  defp selected_session(socket) do
+    selected_session_key = socket.assigns.selected_session_key
+
+    Enum.find(socket.assigns.sessions, fn session ->
+      session_key_value(session) == selected_session_key
+    end)
+  end
+
+  defp selected_session_model_ref(session) when is_map(session) do
+    provider = map_string(session, "modelProvider")
+    model = map_string(session, "model")
+
+    if is_binary(provider) and is_binary(model) do
+      "#{provider}/#{model}"
+    else
+      nil
+    end
+  end
+
+  defp selected_session_model_ref(_session), do: nil
+
+  defp selected_session_model_provider(session) when is_map(session) do
+    map_string(session, "modelProvider")
+  end
+
+  defp selected_session_model_provider(_session), do: nil
+
+  defp selected_session_model_id(session) when is_map(session) do
+    map_string(session, "model")
+  end
+
+  defp selected_session_model_id(_session), do: nil
+
+  defp selected_session_thinking_level(session) when is_map(session) do
+    map_string(session, "thinkingLevel") || ""
+  end
+
+  defp selected_session_thinking_level(_session), do: ""
+
+  defp build_model_select_options(models_catalog, selected_model_ref)
+       when is_list(models_catalog) do
+    options =
+      models_catalog
+      |> Enum.map(fn model ->
+        provider = map_string(model, "provider")
+        model_id = map_string(model, "id")
+        name = map_string(model, "name")
+        value = "#{provider}/#{model_id}"
+
+        label =
+          if is_binary(name) and name != "" and name != model_id do
+            "#{name} (#{value})"
+          else
+            value
+          end
+
+        {label, value}
+      end)
+
+    values = MapSet.new(Enum.map(options, &elem(&1, 1)))
+
+    options =
+      if is_binary(selected_model_ref) and selected_model_ref != "" and
+           not MapSet.member?(values, selected_model_ref) do
+        [{"#{selected_model_ref} (current)", selected_model_ref} | options]
+      else
+        options
+      end
+
+    [{"inherit", ""} | options]
+  end
+
+  defp build_model_select_options(_models_catalog, _selected_model_ref), do: [{"inherit", ""}]
+
+  defp build_thinking_select_options(selected_provider, selected_model, selected_value)
+       when is_binary(selected_value) do
+    options =
+      thinking_level_options(selected_provider, selected_model)
+      |> with_selected_option(selected_value)
+
+    Enum.map(options, fn value ->
+      label = if value == "", do: "inherit", else: value
+      {label, value}
+    end)
+  end
+
+  defp build_thinking_select_options(selected_provider, selected_model, _selected_value) do
+    build_thinking_select_options(selected_provider, selected_model, "")
+  end
+
+  defp thinking_level_options(provider, model) do
+    cond do
+      binary_thinking_provider?(provider) ->
+        @binary_think_levels
+
+      supports_xhigh_thinking?(provider, model) ->
+        @think_levels ++ ["xhigh"]
+
+      true ->
+        @think_levels
+    end
+  end
+
+  defp thinking_level_display(value, provider) when is_binary(value) do
+    if binary_thinking_provider?(provider) and value not in ["", "off"] do
+      "on"
+    else
+      value
+    end
+  end
+
+  defp thinking_level_display(_value, _provider), do: ""
+
+  defp normalize_thinking_patch_value(value, provider) when is_binary(value) do
+    cond do
+      value == "" ->
+        nil
+
+      binary_thinking_provider?(provider) and value == "on" ->
+        "low"
+
+      true ->
+        value
+    end
+  end
+
+  defp binary_thinking_provider?(provider) when is_binary(provider) do
+    normalized =
+      provider
+      |> String.trim()
+      |> String.downcase()
+
+    normalized in ["zai", "z.ai", "z-ai"]
+  end
+
+  defp binary_thinking_provider?(_provider), do: false
+
+  defp with_selected_option(options, selected_value)
+       when is_list(options) and is_binary(selected_value) do
+    if selected_value != "" and selected_value not in options do
+      options ++ [selected_value]
+    else
+      options
+    end
+  end
+
+  defp model_provider_from_ref(model_ref) when is_binary(model_ref) do
+    case String.split(model_ref, "/", parts: 2) do
+      [provider, model_id] when provider != "" and model_id != "" ->
+        provider
+
+      _ ->
+        nil
+    end
+  end
+
+  defp model_id_from_ref(model_ref) when is_binary(model_ref) do
+    case String.split(model_ref, "/", parts: 2) do
+      [provider, model_id] when provider != "" and model_id != "" ->
+        model_id
+
+      _ ->
+        nil
+    end
+  end
+
+  defp model_id_from_ref(_model_ref), do: nil
+
+  defp supports_xhigh_thinking?(provider, model) when is_binary(model) do
+    normalized_model =
+      model
+      |> String.trim()
+      |> String.downcase()
+
+    if normalized_model == "" do
+      false
+    else
+      normalized_provider =
+        provider
+        |> to_string()
+        |> String.trim()
+        |> String.downcase()
+
+      if normalized_provider != "" do
+        MapSet.member?(@xhigh_model_refs, "#{normalized_provider}/#{normalized_model}")
+      else
+        MapSet.member?(@xhigh_model_ids, normalized_model)
+      end
+    end
+  end
+
+  defp supports_xhigh_thinking?(_provider, _model), do: false
+
+  defp normalize_models_catalog(models) when is_list(models) do
+    models
+    |> Enum.reduce([], fn model, acc ->
+      provider = map_string(model, "provider")
+      model_id = map_string(model, "id")
+      name = map_string(model, "name")
+
+      if is_binary(provider) and is_binary(model_id) do
+        [%{"provider" => provider, "id" => model_id, "name" => name || model_id} | acc]
+      else
+        acc
+      end
+    end)
+    |> Enum.uniq_by(fn model -> {model["provider"], model["id"]} end)
+    |> Enum.sort_by(fn model -> {model["provider"], model["id"]} end)
+  end
+
+  defp optimistic_update_session_model(socket, session_key, model_ref)
+       when is_binary(session_key) do
+    {provider, model} =
+      case model_provider_from_ref(model_ref) do
+        nil ->
+          {nil, nil}
+
+        provider ->
+          case String.split(model_ref, "/", parts: 2) do
+            [_provider, model_id] when model_id != "" -> {provider, model_id}
+            _ -> {nil, nil}
+          end
+      end
+
+    update_session_entry(socket, session_key, fn session ->
+      session
+      |> Map.put("modelProvider", provider)
+      |> Map.put("model", model)
+      |> Map.put("updatedAt", System.system_time(:millisecond))
+    end)
+  end
+
+  defp optimistic_update_session_model(socket, _session_key, _model_ref), do: socket
+
+  defp optimistic_update_session_thinking(socket, session_key, thinking_level)
+       when is_binary(session_key) do
+    update_session_entry(socket, session_key, fn session ->
+      session
+      |> Map.put("thinkingLevel", thinking_level)
+      |> Map.put("updatedAt", System.system_time(:millisecond))
+    end)
+  end
+
+  defp optimistic_update_session_thinking(socket, _session_key, _thinking_level), do: socket
+
+  defp update_session_entry(socket, session_key, updater)
+       when is_binary(session_key) and is_function(updater, 1) do
+    update(socket, :sessions, fn sessions ->
+      Enum.map(sessions, fn session ->
+        if session_key_value(session) == session_key do
+          updater.(session)
+        else
+          session
+        end
+      end)
+    end)
   end
 
   defp session_subtitle(nil, _loading?, _error, _pending_session_key),

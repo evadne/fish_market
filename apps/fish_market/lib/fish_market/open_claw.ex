@@ -40,6 +40,11 @@ defmodule FishMarket.OpenClaw do
     request("sessions.patch", Map.put(patch, "key", session_key))
   end
 
+  @spec models_list() :: {:ok, term()} | {:error, error_reason()}
+  def models_list do
+    request("models.list", %{})
+  end
+
   @spec chat_history(String.t(), pos_integer()) :: {:ok, term()} | {:error, error_reason()}
   def chat_history(session_key, limit \\ 200)
       when is_binary(session_key) and is_integer(limit) and limit > 0 do
