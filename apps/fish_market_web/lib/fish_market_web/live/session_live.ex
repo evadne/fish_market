@@ -1689,18 +1689,143 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp normalize_history_message_bundle(message, id_prefix) when is_map(message) do
-    trace_messages =
-      build_thinking_trace_messages(message, id_prefix) ++
-        build_tool_call_trace_messages(message, id_prefix)
+    case build_content_history_messages(message, id_prefix) do
+      [] ->
+        normalized_message = normalize_history_message(message, id_prefix)
 
-    normalized_message = normalize_history_message(message, id_prefix)
+        if skip_primary_history_message?(normalized_message) do
+          []
+        else
+          [normalized_message]
+        end
 
-    if skip_primary_history_message?(normalized_message) do
-      trace_messages
-    else
-      trace_messages ++ [normalized_message]
+      entries ->
+        entries
     end
   end
+
+  # Preserve original content[] ordering so traces render exactly as emitted
+  # (e.g. thinking -> text -> thinking).
+  defp build_content_history_messages(message, id_prefix) when is_map(message) do
+    timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
+    role = Message.role(message)
+    content = map_get(message, "content")
+
+    if is_list(content) do
+      {entries, pending_text_parts, pending_text_start} =
+        content
+        |> Enum.with_index(1)
+        |> Enum.reduce({[], [], nil}, fn {part, index}, {entries, pending_parts, pending_start} ->
+          case content_part_history_entry(part, id_prefix, index, role, timestamp_label) do
+            {:text, text_part} ->
+              if String.trim(text_part) == "" do
+                {entries, pending_parts, pending_start}
+              else
+                next_pending_start = pending_start || index
+                {entries, pending_parts ++ [text_part], next_pending_start}
+              end
+
+            {:entry, entry} ->
+              entries =
+                flush_pending_text_entry(
+                  entries,
+                  pending_parts,
+                  pending_start,
+                  id_prefix,
+                  role,
+                  timestamp_label
+                )
+
+              {entries ++ [entry], [], nil}
+
+            :ignore ->
+              {entries, pending_parts, pending_start}
+          end
+        end)
+
+      flush_pending_text_entry(
+        entries,
+        pending_text_parts,
+        pending_text_start,
+        id_prefix,
+        role,
+        timestamp_label
+      )
+    else
+      []
+    end
+  end
+
+  defp flush_pending_text_entry(entries, [], _start, _id_prefix, _role, _timestamp_label),
+    do: entries
+
+  defp flush_pending_text_entry(
+         entries,
+         text_parts,
+         start_index,
+         id_prefix,
+         role,
+         timestamp_label
+       )
+       when is_list(entries) and is_list(text_parts) do
+    text = Enum.join(text_parts, "\n")
+
+    entries ++
+      [
+        %{
+          id: "#{id_prefix}-text-#{start_index || 0}-#{message_hash(text)}",
+          role: role,
+          text: text,
+          timestamp_label: timestamp_label,
+          trace?: trace_role?(role)
+        }
+      ]
+  end
+
+  defp content_part_history_entry(part, id_prefix, index, role, timestamp_label)
+       when is_map(part) and is_integer(index) and index > 0 do
+    cond do
+      thinking_text = extract_thinking_text(part) ->
+        {:entry,
+         %{
+           id: "#{id_prefix}-thinking-#{index}-#{message_hash(part)}",
+           role: "thinking",
+           text: truncate_trace_text(thinking_text, @tool_trace_text_limit),
+           timestamp_label: timestamp_label,
+           trace?: true
+         }}
+
+      tool_call = extract_tool_call_part(part) ->
+        {:entry,
+         %{
+           id: "#{id_prefix}-toolcall-#{index}-#{message_hash(part)}",
+           role: "toolcall",
+           text: nil,
+           tool_name: tool_call.name,
+           tool_argument_rows: tool_argument_rows(tool_call.arguments),
+           timestamp_label: timestamp_label,
+           trace?: true
+         }}
+
+      tool_result_text = extract_tool_result_text(part) ->
+        {:entry,
+         %{
+           id: "#{id_prefix}-toolresult-#{index}-#{message_hash(part)}",
+           role: "toolresult",
+           text: tool_result_text,
+           timestamp_label: timestamp_label,
+           trace?: true
+         }}
+
+      text_part = extract_text_part(part, role) ->
+        {:text, text_part}
+
+      true ->
+        :ignore
+    end
+  end
+
+  defp content_part_history_entry(_part, _id_prefix, _index, _role, _timestamp_label), do: :ignore
 
   defp normalize_history_message(message, id_prefix) when is_map(message) do
     timestamp_ms = Message.timestamp_ms(message)
@@ -1721,70 +1846,6 @@ defmodule FishMarketWeb.SessionLive do
        do: String.trim(text) == ""
 
   defp skip_primary_history_message?(_message), do: false
-
-  defp build_thinking_trace_messages(message, id_prefix) when is_map(message) do
-    timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
-    content = map_get(message, "content")
-
-    if is_list(content) do
-      content
-      |> Enum.with_index(1)
-      |> Enum.flat_map(fn {part, index} ->
-        case extract_thinking_text(part) do
-          nil ->
-            []
-
-          thinking_text ->
-            [
-              %{
-                id: "#{id_prefix}-thinking-#{index}-#{message_hash(part)}",
-                role: "thinking",
-                text: truncate_trace_text(thinking_text, @tool_trace_text_limit),
-                timestamp_label: timestamp_label,
-                trace?: true
-              }
-            ]
-        end
-      end)
-    else
-      []
-    end
-  end
-
-  defp build_thinking_trace_messages(_message, _id_prefix), do: []
-
-  defp build_tool_call_trace_messages(message, id_prefix) when is_map(message) do
-    timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
-    content = map_get(message, "content")
-
-    if is_list(content) do
-      content
-      |> Enum.with_index(1)
-      |> Enum.flat_map(fn {part, index} ->
-        case extract_tool_call_part(part) do
-          nil ->
-            []
-
-          %{name: name, arguments: arguments} ->
-            [
-              %{
-                id: "#{id_prefix}-toolcall-#{index}-#{message_hash(part)}",
-                role: "toolcall",
-                text: nil,
-                tool_name: name,
-                tool_argument_rows: tool_argument_rows(arguments),
-                timestamp_label: timestamp_label,
-                trace?: true
-              }
-            ]
-        end
-      end)
-    else
-      []
-    end
-  end
-
-  defp build_tool_call_trace_messages(_message, _id_prefix), do: []
 
   defp extract_thinking_text(part) when is_map(part) do
     type = map_string(part, "type")
@@ -1812,6 +1873,48 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp extract_tool_call_part(_part), do: nil
+
+  defp extract_tool_result_text(part) when is_map(part) do
+    type = map_string(part, "type")
+
+    if is_binary(type) and String.downcase(type) in ["toolresult", "tool_result"] do
+      text = map_string(part, "text")
+      result = map_get(part, "result") || map_get(part, "output") || map_get(part, "content")
+
+      cond do
+        is_binary(text) and text != "" ->
+          text
+
+        is_nil(result) ->
+          "(tool result)"
+
+        true ->
+          format_trace_value(result)
+      end
+    else
+      nil
+    end
+  end
+
+  defp extract_tool_result_text(_part), do: nil
+
+  defp extract_text_part(part, role) when is_map(part) and is_binary(role) do
+    type =
+      part
+      |> map_string("type")
+      |> case do
+        value when is_binary(value) -> String.downcase(value)
+        _ -> nil
+      end
+
+    if type in ["text", "input_text", "output_text"] and is_binary(map_string(part, "text")) do
+      Message.extract_text(%{"role" => role, "content" => [part]}) || map_string(part, "text")
+    else
+      nil
+    end
+  end
+
+  defp extract_text_part(_part, _role), do: nil
 
   defp extract_message_thinking_text(message) when is_map(message) do
     content = map_get(message, "content")
@@ -2020,17 +2123,21 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp trace_message?(message, role) when is_map(message) do
-    normalized_role = String.downcase(role)
     content = map_get(message, "content")
     visible_text = Message.extract_text(message)
     has_visible_text = is_binary(visible_text) and String.trim(visible_text) != ""
     has_trace_content = contains_trace_content?(content)
 
-    normalized_role in ["tool", "toolresult", "tool_result", "function"] or
-      (has_trace_content and not has_visible_text)
+    trace_role?(role) or (has_trace_content and not has_visible_text)
   end
 
   defp trace_message?(_message, _role), do: false
+
+  defp trace_role?(role) when is_binary(role) do
+    String.downcase(role) in ["tool", "toolresult", "tool_result", "function"]
+  end
+
+  defp trace_role?(_role), do: false
 
   defp contains_trace_content?(content) when is_list(content) do
     Enum.any?(content, fn item ->
