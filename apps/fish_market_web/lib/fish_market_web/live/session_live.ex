@@ -644,10 +644,10 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp apply_local_user_message(socket, payload) when is_map(payload) do
-    session_key = map_string(payload, "sessionKey") || map_string(payload, :sessionKey)
-    text = map_string(payload, "message") || map_string(payload, :message)
-    run_id = map_string(payload, "runId") || map_string(payload, :runId)
-    timestamp_ms = map_get(payload, "timestamp") || map_get(payload, :timestamp)
+    session_key = map_string(payload, "sessionKey")
+    text = map_string(payload, "message")
+    run_id = map_string(payload, "runId")
+    timestamp_ms = map_get(payload, "timestamp")
 
     cond do
       socket.assigns.selected_session_key != session_key ->
@@ -1212,8 +1212,14 @@ defmodule FishMarketWeb.SessionLive do
 
   defp maybe_assign_streaming_thinking(socket, payload, run_id, stream)
        when is_map(payload) and is_binary(stream) do
-    case extract_streaming_thinking_text(payload, stream) do
-      text when is_binary(text) and text != "" ->
+    case extract_streaming_thinking_update(payload, stream) do
+      {:append, text} ->
+        socket
+        |> assign(:assistant_pending?, true)
+        |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
+        |> append_streaming_content(:streaming_thinking_text, text)
+
+      {:merge, text} ->
         socket
         |> assign(:assistant_pending?, true)
         |> assign(:streaming_run_id, run_id || socket.assigns.streaming_run_id)
@@ -1226,75 +1232,78 @@ defmodule FishMarketWeb.SessionLive do
 
   defp maybe_assign_streaming_thinking(socket, _payload, _run_id, _stream), do: socket
 
-  defp extract_streaming_thinking_text(payload, stream)
+  defp extract_streaming_thinking_update(payload, stream)
        when is_map(payload) and is_binary(stream) do
     data = map_get(payload, "data")
     message = map_get(payload, "message")
 
     cond do
       stream in ["thinking", "reasoning"] ->
-        extract_streaming_thinking_text_from_data(data, true) ||
-          extract_message_thinking_text(message)
+        extract_streaming_thinking_update_from_data(data, true) ||
+          wrap_streaming_update(:merge, extract_message_thinking_text(message))
 
       stream == "assistant" ->
-        extract_streaming_thinking_text_from_data(data, false) ||
-          extract_message_thinking_text(message)
+        extract_streaming_thinking_update_from_data(data, false) ||
+          wrap_streaming_update(:merge, extract_message_thinking_text(message))
 
       true ->
         nil
     end
   end
 
-  defp extract_streaming_thinking_text(_payload, _stream), do: nil
+  defp extract_streaming_thinking_update(_payload, _stream), do: nil
 
-  defp extract_streaming_thinking_text_from_data(data, allow_text_fallback?)
+  defp extract_streaming_thinking_update_from_data(data, allow_text_fallback?)
        when is_map(data) and is_boolean(allow_text_fallback?) do
-    direct =
-      map_string(data, "thinkingDelta") ||
-        map_string(data, "thinking_delta") ||
-        map_string(data, "reasoningDelta") ||
-        map_string(data, "reasoning_delta") ||
-        map_string(data, "thinking") ||
-        map_string(data, "reasoning")
+    wrap_streaming_update(
+      :append,
+      map_string(data, "thinkingDelta") || map_string(data, "reasoningDelta")
+    ) ||
+      wrap_streaming_update(:merge, map_string(data, "thinking") || map_string(data, "reasoning")) ||
+      wrap_streaming_update(:merge, map_get(data, "message") |> extract_message_thinking_text()) ||
+      wrap_streaming_update(
+        :merge,
+        map_get(data, "content")
+        |> case do
+          content when is_list(content) ->
+            extract_message_thinking_text(%{"content" => content})
 
-    cond do
-      is_binary(direct) and direct != "" ->
-        direct
-
-      true ->
-        from_message =
-          map_get(data, "message")
-          |> extract_message_thinking_text()
-
-        from_content =
-          map_get(data, "content")
-          |> case do
-            content when is_list(content) ->
-              extract_message_thinking_text(%{"content" => content})
-
-            _ ->
-              nil
-          end
-
-        from_delta =
-          if allow_text_fallback? do
-            map_string(data, "delta")
-          else
+          _ ->
             nil
-          end
+        end
+      ) ||
+      if(allow_text_fallback?,
+        do: wrap_streaming_update(:append, map_string(data, "delta")),
+        else: nil
+      ) ||
+      if(allow_text_fallback?,
+        do: wrap_streaming_update(:append, map_string(data, "text")),
+        else: nil
+      )
+  end
 
-        from_text =
-          if allow_text_fallback? do
-            map_string(data, "text")
-          else
-            nil
-          end
+  defp extract_streaming_thinking_update_from_data(_data, _allow_text_fallback?), do: nil
 
-        from_message || from_content || from_delta || from_text
+  defp wrap_streaming_update(mode, text)
+       when mode in [:append, :merge] and is_binary(text) and text != "",
+       do: {mode, text}
+
+  defp wrap_streaming_update(_mode, _text), do: nil
+
+  defp append_streaming_content(socket, key, text)
+       when is_atom(key) and is_binary(text) and text != "" do
+    current_text = Map.get(socket.assigns, key)
+    current = if is_binary(current_text), do: current_text, else: ""
+    incoming = normalize_line_endings(text)
+
+    if incoming == "" do
+      socket
+    else
+      assign(socket, key, current <> incoming)
     end
   end
 
-  defp extract_streaming_thinking_text_from_data(_data, _allow_text_fallback?), do: nil
+  defp append_streaming_content(socket, _key, _text), do: socket
 
   defp maybe_assign_streaming_content(socket, key, text)
        when is_atom(key) and is_binary(text) and text != "" do
@@ -1315,23 +1324,12 @@ defmodule FishMarketWeb.SessionLive do
     current = if is_binary(current_text), do: current_text, else: ""
 
     cond do
-      incoming == "" ->
-        current
-
-      current == "" ->
-        incoming
-
-      String.starts_with?(incoming, current) ->
-        incoming
-
-      String.starts_with?(current, incoming) ->
-        current
-
-      String.ends_with?(current, incoming) ->
-        current
-
-      true ->
-        current <> incoming
+      incoming == "" -> current
+      current == "" -> incoming
+      String.starts_with?(incoming, current) -> incoming
+      String.starts_with?(current, incoming) -> current
+      String.ends_with?(current, incoming) -> current
+      true -> current <> incoming
     end
   end
 

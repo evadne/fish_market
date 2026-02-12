@@ -4,20 +4,18 @@ defmodule FishMarketWeb.MenuLive do
   alias FishMarketWeb.SessionRoute
 
   defp session_key(session) when is_map(session) do
-    map_string(session, "key") || map_string(session, :key)
+    map_string(session, "key")
   end
 
   defp session_label(session) do
     map_string(session, "label") ||
-      map_string(session, :label) ||
       map_string(session, "displayName") ||
-      map_string(session, :displayName) ||
       session_key(session) ||
       "(unknown)"
   end
 
   defp session_kind(session) do
-    map_string(session, "kind") || map_string(session, :kind) || "unknown"
+    map_string(session, "kind") || "unknown"
   end
 
   defp session_dom_id(nil), do: "unknown"
@@ -36,7 +34,6 @@ defmodule FishMarketWeb.MenuLive do
   defp updated_at(session) do
     map_integer(session, "updatedAt")
     |> normalize_unix_timestamp()
-    |> Kernel.||(map_integer(session, :updatedAt) |> normalize_unix_timestamp())
     |> Kernel.||(0)
   end
 

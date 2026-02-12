@@ -7,15 +7,11 @@ defmodule FishMarket.OpenClaw.Message do
 
   @spec extract_text(term()) :: String.t() | nil
   def extract_text(message) when is_map(message) do
-    role = map_string(message, "role") || map_string(message, :role) || ""
+    role = map_string(message, "role") || ""
 
     cond do
       is_binary(map_get(message, "content")) ->
         content = map_get(message, "content")
-        apply_text_filters(content, role)
-
-      is_binary(map_get(message, :content)) ->
-        content = map_get(message, :content)
         apply_text_filters(content, role)
 
       is_list(map_get(message, "content")) ->
@@ -24,17 +20,8 @@ defmodule FishMarket.OpenClaw.Message do
         |> extract_text_parts()
         |> apply_text_filters(role)
 
-      is_list(map_get(message, :content)) ->
-        message
-        |> map_get(:content)
-        |> extract_text_parts()
-        |> apply_text_filters(role)
-
       is_binary(map_get(message, "text")) ->
         apply_text_filters(map_get(message, "text"), role)
-
-      is_binary(map_get(message, :text)) ->
-        apply_text_filters(map_get(message, :text), role)
 
       true ->
         nil
@@ -52,7 +39,7 @@ defmodule FishMarket.OpenClaw.Message do
 
   @spec role(term()) :: String.t()
   def role(message) when is_map(message) do
-    map_string(message, "role") || map_string(message, :role) || "assistant"
+    map_string(message, "role") || "assistant"
   end
 
   def role(_), do: "assistant"
@@ -63,20 +50,11 @@ defmodule FishMarket.OpenClaw.Message do
       is_integer(map_get(message, "timestamp")) ->
         normalize_unix_timestamp(map_get(message, "timestamp"))
 
-      is_integer(map_get(message, :timestamp)) ->
-        normalize_unix_timestamp(map_get(message, :timestamp))
-
       is_integer(map_get(message, "ts")) ->
         normalize_unix_timestamp(map_get(message, "ts"))
 
-      is_integer(map_get(message, :ts)) ->
-        normalize_unix_timestamp(map_get(message, :ts))
-
       is_binary(map_get(message, "timestamp")) ->
         parse_iso8601_timestamp(map_get(message, "timestamp"))
-
-      is_binary(map_get(message, :timestamp)) ->
-        parse_iso8601_timestamp(map_get(message, :timestamp))
 
       true ->
         nil
@@ -91,9 +69,6 @@ defmodule FishMarket.OpenClaw.Message do
       cond do
         is_map(part) and map_get(part, "type") == "text" and is_binary(map_get(part, "text")) ->
           map_get(part, "text")
-
-        is_map(part) and map_get(part, :type) == "text" and is_binary(map_get(part, :text)) ->
-          map_get(part, :text)
 
         true ->
           nil
@@ -130,7 +105,7 @@ defmodule FishMarket.OpenClaw.Message do
   end
 
   defp summarize_non_text(message) do
-    content = map_get(message, "content") || map_get(message, :content)
+    content = map_get(message, "content")
     tool_names = extract_tool_call_names(content)
 
     cond do
@@ -158,7 +133,7 @@ defmodule FishMarket.OpenClaw.Message do
     parts
     |> Enum.map(fn part ->
       if is_map(part) and tool_call_type?(part) do
-        map_string(part, "name") || map_string(part, :name) || "(unnamed)"
+        map_string(part, "name") || "(unnamed)"
       else
         nil
       end
@@ -173,7 +148,7 @@ defmodule FishMarket.OpenClaw.Message do
     parts
     |> Enum.map(fn part ->
       if is_map(part) do
-        map_string(part, "type") || map_string(part, :type)
+        map_string(part, "type")
       else
         nil
       end
@@ -188,7 +163,7 @@ defmodule FishMarket.OpenClaw.Message do
   defp extract_non_text_types(_), do: []
 
   defp tool_call_type?(part) do
-    case map_string(part, "type") || map_string(part, :type) do
+    case map_string(part, "type") do
       value when is_binary(value) ->
         normalized = String.downcase(value)
         normalized in ["toolcall", "tool_call"]
