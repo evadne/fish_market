@@ -60,7 +60,7 @@ Configured in `config/runtime.exs` (except test):
 - `chat_send/3`
 
 Gateway client connect metadata advertises `caps: ["tool-events"]` so OpenClaw can route live
-tool stream events to Fish Market connections.
+tool-event streams to Fish Market connections.
 
 And PubSub helpers for subscription/broadcast.
 
@@ -72,38 +72,36 @@ Topics used by the app:
   - transport/connect/disconnect status
 - `openclaw:chat`
   - broad chat events used by menu/unread behavior
-- `openclaw:ui:session-selection`
-  - UI session selection coordination between LiveViews
 - `openclaw:event:<event_name>`
   - per-event fanout
 - `openclaw:session:<session_key>`
   - per-session fanout for session-specific updates
 
-This lets `MenuLive` observe global updates while `SessionLive` only processes the selected session stream.
+This lets `SessionLive` process both global and selected-session-specific streams.
 
 ## Web UI Composition
 
 Route definition:
 
-- `"/"` -> `FishMarketWeb.ApplicationLive`
+- `"/"` -> `FishMarketWeb.SessionLive`
+- `"/session/:session_id"` -> `FishMarketWeb.SessionLive`
 
-`ApplicationLive` renders the shell and composes two child LiveViews:
+`SessionLive` renders the full shell and composes:
 
-- `FishMarketWeb.MenuLive` (master pane)
-- `FishMarketWeb.SessionLive` (detail pane)
+- `FishMarketWeb.MenuLive` (master pane, rendered as a LiveComponent)
 
 ### `MenuLive` responsibilities
 
 - Load and render session list.
 - Maintain selected session key.
 - Track unread session badges (`new`) for background activity.
-- Broadcast selection events (`openclaw:ui:session-selection`).
+- Send selected session changes to `SessionLive` via `menu-select-session` events.
 - Refresh sessions on connection or terminal chat states (`final`, `aborted`, `error`).
 
 ### `SessionLive` responsibilities
 
-- React to selected session changes.
-- Subscribe to the active session topic.
+- React to selected session changes (including route params).
+- Subscribe to the active session streams.
 - Load and display session history.
 - Send chat messages and queue while a new session is being created.
 - Render live streaming assistant output.
@@ -113,6 +111,12 @@ Route definition:
 - Patch per-session model/thinking overrides via `sessions.patch` from top-bar controls.
 - When traces are enabled for a session, request `sessions.patch` with `verboseLevel: "on"` so
   OpenClaw emits tool event streams for that session.
+
+### Routing and session identity
+
+- Session routes use encoded session tokens.
+- `FishMarketWeb.SessionRoute` handles encode/decode plus validation.
+- URL tokens are normalized before session selection is accepted.
 
 ## Front-End JS Responsibilities
 
@@ -132,14 +136,14 @@ Route definition:
 ### Startup
 
 1. `GatewayClient` boots and connects to OpenClaw.
-2. `MenuLive` and `SessionLive` subscribe to required topics.
-3. `MenuLive` loads sessions and publishes default/selected session.
+2. `SessionLive` subscribes to required topics, loads sessions, and loads models.
+3. `SessionLive` resolves selected session from params and loads history if present.
 
 ### Session selection
 
 1. User clicks a session in `MenuLive`.
-2. `MenuLive` broadcasts selection topic.
-3. `SessionLive` receives selection, resets transient view state, subscribes to that session topic, loads history.
+2. `MenuLive` sends `menu-select-session` with `session_key`.
+3. `SessionLive` updates selected session state, resets transient view state, and loads history.
 
 ### Chat send
 
@@ -163,9 +167,11 @@ Route definition:
   - `apps/fish_market/lib/fish_market/open_claw/message.ex`
 - Web
   - `apps/fish_market_web/lib/fish_market_web/router.ex`
-  - `apps/fish_market_web/lib/fish_market_web/live/application_live.ex`
+  - `apps/fish_market_web/lib/fish_market_web/session_route.ex`
   - `apps/fish_market_web/lib/fish_market_web/live/menu_live.ex`
+  - `apps/fish_market_web/lib/fish_market_web/live/menu_live.html.heex`
   - `apps/fish_market_web/lib/fish_market_web/live/session_live.ex`
+  - `apps/fish_market_web/lib/fish_market_web/live/session_live.html.heex`
   - `apps/fish_market_web/assets/js/app.js`
 - Config
   - `config/config.exs`

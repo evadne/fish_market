@@ -6,6 +6,17 @@ This is a web application written using the Phoenix web framework.
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 - Architecture and implementation docs live in `docs/` (start with `docs/ARCHITECTURE.md`). Keep docs updated when structure or major flows change.
 
+### Current run notes
+
+- `SessionLive` is the active top-level LiveView for both root and tokenized session routes.
+- Routing is:
+  - `"/"` -> `FishMarketWeb.SessionLive`
+  - `"/session/:session_id"` -> `FishMarketWeb.SessionLive`
+- URL session identity is tokenized via `FishMarketWeb.SessionRoute` and decoded in `SessionLive.normalize_session_selection/1` from `%{"session_id" => ...}`.
+- `MenuLive` posts selection through `phx-click="menu-select-session"` with `phx-value-session_key`; no `openclaw:ui:session-selection` pubsub topic exists.
+- Session and event fanout currently goes through `openclaw:chat`, `openclaw:event:<event>`, and `openclaw:session:<session_key>` as implemented by `FishMarket.OpenClaw`.
+- `MenuLive` is rendered by `SessionLive` as a LiveComponent.
+
 ### Phoenix v1.8 guidelines
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
