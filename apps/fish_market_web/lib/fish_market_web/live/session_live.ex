@@ -408,6 +408,7 @@ defmodule FishMarketWeb.SessionLive do
       case result do
         {:ok, _payload} ->
           socket
+          |> maybe_schedule_menu_refresh()
 
         {:error, reason} ->
           assign(socket, :send_error, "Failed to create session: #{format_reason(reason)}")
@@ -1057,6 +1058,7 @@ defmodule FishMarketWeb.SessionLive do
     |> assign(:queued_messages, [])
     |> assign(:form, to_form(%{"message" => ""}, as: :chat))
     |> stream(:messages, [], reset: true)
+    |> ensure_session_placeholder(new_session_key)
     |> sync_no_messages_state()
     |> sync_session_controls()
   end
@@ -2327,38 +2329,25 @@ defmodule FishMarketWeb.SessionLive do
   defp contains_trace_content?(_), do: false
 
   defp build_new_session_key(nil) do
-    unique_suffix = Integer.to_string(System.unique_integer([:positive, :monotonic]))
-    "agent:main:session-#{unique_suffix}"
+    "agent:main:session-#{session_id_suffix()}"
   end
 
   defp build_new_session_key(current_session_key) when is_binary(current_session_key) do
-    unique_suffix = Integer.to_string(System.unique_integer([:positive, :monotonic]))
-
     case String.split(current_session_key, ":", parts: 3) do
-      ["agent", agent_id, tail] ->
-        base_slug =
-          tail
-          |> String.split(":", trim: true)
-          |> List.last()
-          |> normalize_session_slug()
-
-        "agent:#{agent_id}:#{base_slug}-#{unique_suffix}"
+      ["agent", agent_id, _tail] ->
+        "agent:#{agent_id}:session-#{session_id_suffix()}"
 
       _ ->
-        "agent:main:session-#{unique_suffix}"
+        "agent:main:session-#{session_id_suffix()}"
     end
   end
 
-  defp normalize_session_slug(nil), do: "session"
+  defp session_id_suffix do
+    "#{System.system_time(:millisecond)}-#{build_session_suffix()}"
+  end
 
-  defp normalize_session_slug(value) when is_binary(value) do
-    slug =
-      value
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9_-]+/u, "-")
-      |> String.trim("-_")
-
-    if slug == "", do: "session", else: slug
+  defp build_session_suffix do
+    :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
   end
 
   defp map_string(map, key) when is_map(map) do
