@@ -155,12 +155,58 @@
                     ]}
                   >
                     <div class="mb-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                      <span class="font-semibold uppercase tracking-wide">{message.role}</span>
+                      <span class="font-semibold uppercase tracking-wide">
+                        {message_role_label(message)}
+                      </span>
                       <span class="font-medium">
                         {message.timestamp_label || "time unavailable"}
                       </span>
                     </div>
-                    <div class="break-words">{render_message_text(message.text)}</div>
+
+                    <%= if tool_trace_message?(message) do %>
+                      <div class="space-y-3">
+                        <div class="text-xs font-medium text-gray-600 dark:text-gray-300">
+                          tool: {Map.get(message, :tool_name) || "(unnamed tool)"}
+                        </div>
+
+                        <div
+                          :if={Map.get(message, :tool_argument_rows, []) != []}
+                          class="overflow-hidden rounded-md border border-gray-200 dark:border-gray-700"
+                        >
+                          <table class="w-full table-fixed border-collapse text-xs">
+                            <thead class="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
+                              <tr>
+                                <th class="w-40 border-b border-gray-200 px-3 py-2 font-semibold dark:border-gray-700">
+                                  argument
+                                </th>
+                                <th class="border-b border-gray-200 px-3 py-2 font-semibold dark:border-gray-700">
+                                  value
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                :for={row <- Map.get(message, :tool_argument_rows, [])}
+                                class="align-top"
+                              >
+                                <th class="border-b border-gray-100 bg-gray-50/70 px-3 py-2 text-left font-mono text-[11px] font-medium text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-300">
+                                  {row.key}
+                                </th>
+                                <td class="border-b border-gray-100 px-3 py-2 text-gray-800 dark:border-gray-800 dark:text-gray-100">
+                                  <div class="break-words">{render_message_text(row.value)}</div>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div :if={message_text_present?(message)} class="break-words">
+                          {render_message_text(message.text)}
+                        </div>
+                      </div>
+                    <% else %>
+                      <div class="break-words">{render_message_text(message.text)}</div>
+                    <% end %>
                   </article>
                 </div>
 

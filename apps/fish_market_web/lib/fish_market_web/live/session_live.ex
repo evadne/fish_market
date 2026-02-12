@@ -895,17 +895,77 @@ defmodule FishMarketWeb.SessionLive do
         insert_history_message(socket, message)
 
       index ->
-        updated_messages = List.replace_at(socket.assigns.history_messages, index, message)
+        existing_message = Enum.at(socket.assigns.history_messages, index)
+        merged_message = merge_history_message(existing_message, message)
+        updated_messages = List.replace_at(socket.assigns.history_messages, index, merged_message)
         socket = assign(socket, :history_messages, updated_messages)
 
-        if socket.assigns.show_traces? or not Map.get(message, :trace?, false) do
-          stream_insert(socket, :messages, message)
+        if socket.assigns.show_traces? or not Map.get(merged_message, :trace?, false) do
+          stream_insert(socket, :messages, merged_message)
         else
           socket
         end
         |> sync_no_messages_state()
     end
   end
+
+  defp merge_history_message(existing_message, incoming_message)
+       when is_map(existing_message) and is_map(incoming_message) do
+    if tool_trace_message?(existing_message) or tool_trace_message?(incoming_message) do
+      incoming_message
+      |> Map.put(
+        :timestamp_label,
+        coalesce_non_empty(
+          Map.get(incoming_message, :timestamp_label),
+          Map.get(existing_message, :timestamp_label)
+        )
+      )
+      |> Map.put(
+        :text,
+        coalesce_non_empty(Map.get(incoming_message, :text), Map.get(existing_message, :text))
+      )
+      |> Map.put(
+        :tool_name,
+        coalesce_non_empty(
+          Map.get(incoming_message, :tool_name),
+          Map.get(existing_message, :tool_name)
+        )
+      )
+      |> Map.put(
+        :tool_argument_rows,
+        coalesce_non_empty_list(
+          Map.get(incoming_message, :tool_argument_rows),
+          Map.get(existing_message, :tool_argument_rows)
+        )
+      )
+    else
+      incoming_message
+    end
+  end
+
+  defp merge_history_message(_existing_message, incoming_message), do: incoming_message
+
+  defp coalesce_non_empty(primary, fallback) when is_binary(primary) do
+    if String.trim(primary) == "" do
+      fallback
+    else
+      primary
+    end
+  end
+
+  defp coalesce_non_empty(primary, _fallback) when not is_nil(primary), do: primary
+  defp coalesce_non_empty(_primary, fallback), do: fallback
+
+  defp coalesce_non_empty_list(primary, fallback) when is_list(primary) do
+    if primary == [] do
+      if is_list(fallback), do: fallback, else: []
+    else
+      primary
+    end
+  end
+
+  defp coalesce_non_empty_list(_primary, fallback) when is_list(fallback), do: fallback
+  defp coalesce_non_empty_list(_primary, _fallback), do: []
 
   defp build_tool_trace_message(payload) when is_map(payload) do
     data = map_get(payload, "data")
@@ -916,22 +976,21 @@ defmodule FishMarketWeb.SessionLive do
       tool_call_id = map_string(data, "toolCallId")
       phase = map_string(data, "phase") || "update"
       name = map_string(data, "name") || "(unnamed tool)"
-      args = map_get(data, "args")
+      args = map_get(data, "args") || map_get(data, "arguments")
       result = map_get(data, "result")
       partial_result = map_get(data, "partialResult")
       error = map_get(data, "error")
+      tool_argument_rows = tool_argument_rows(args)
 
       text =
         build_tool_trace_text(%{
-          name: name,
           phase: phase,
-          args: args,
           result: result,
           partial_result: partial_result,
           error: error
         })
 
-      if is_binary(text) and String.trim(text) != "" do
+      if message_text_present?(text) or tool_argument_rows != [] do
         id =
           if is_binary(tool_call_id) and tool_call_id != "" do
             "tool-stream-#{run_id}-#{tool_call_id}"
@@ -943,6 +1002,8 @@ defmodule FishMarketWeb.SessionLive do
           id: id,
           role: "toolresult",
           text: text,
+          tool_name: name,
+          tool_argument_rows: tool_argument_rows,
           timestamp_label: format_timestamp_label(Message.timestamp_ms(payload)),
           trace?: true
         }
@@ -955,9 +1016,7 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp build_tool_trace_text(%{
-         name: name,
          phase: phase,
-         args: args,
          result: result,
          partial_result: partial_result,
          error: error
@@ -970,10 +1029,7 @@ defmodule FishMarketWeb.SessionLive do
       end
 
     sections = [
-      "---",
-      "name: #{name}",
       "phase: #{phase}",
-      format_trace_section("args", args),
       format_trace_section("output", output),
       format_trace_section("error", error)
     ]
@@ -1086,6 +1142,26 @@ defmodule FishMarketWeb.SessionLive do
   defp format_reason(%{message: message}) when is_binary(message), do: message
   defp format_reason(reason), do: inspect(reason)
 
+  defp message_role_label(%{role: role}) when is_binary(role) do
+    case String.downcase(role) do
+      value when value in ["toolcall", "tool_call"] -> "tool call"
+      value when value in ["toolresult", "tool_result"] -> "tool result"
+      value -> value
+    end
+  end
+
+  defp message_role_label(_message), do: "assistant"
+
+  defp tool_trace_message?(message) when is_map(message) do
+    is_binary(Map.get(message, :tool_name))
+  end
+
+  defp tool_trace_message?(_message), do: false
+
+  defp message_text_present?(%{text: text}) when is_binary(text), do: String.trim(text) != ""
+  defp message_text_present?(text) when is_binary(text), do: String.trim(text) != ""
+  defp message_text_present?(_), do: false
+
   defp render_message_text(text) when is_binary(text) do
     text
     |> normalize_line_endings()
@@ -1101,6 +1177,39 @@ defmodule FishMarketWeb.SessionLive do
     text
     |> String.replace("\r\n", "\n")
     |> String.replace("\r", "\n")
+  end
+
+  defp tool_argument_rows(arguments) when is_map(arguments) do
+    arguments
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map(fn {key, value} ->
+      %{
+        key: to_string(key),
+        value: format_trace_value(value)
+      }
+    end)
+  end
+
+  defp tool_argument_rows(arguments) when is_list(arguments) do
+    arguments
+    |> Enum.with_index(1)
+    |> Enum.map(fn {value, index} ->
+      %{
+        key: Integer.to_string(index),
+        value: format_trace_value(value)
+      }
+    end)
+  end
+
+  defp tool_argument_rows(nil), do: []
+
+  defp tool_argument_rows(value) do
+    [
+      %{
+        key: "value",
+        value: format_trace_value(value)
+      }
+    ]
   end
 
   defp format_timestamp_label(nil), do: "time unavailable"
@@ -1134,8 +1243,17 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp normalize_history_message_bundle(message, id_prefix) when is_map(message) do
-    build_thinking_trace_messages(message, id_prefix) ++
-      [normalize_history_message(message, id_prefix)]
+    trace_messages =
+      build_thinking_trace_messages(message, id_prefix) ++
+        build_tool_call_trace_messages(message, id_prefix)
+
+    normalized_message = normalize_history_message(message, id_prefix)
+
+    if skip_primary_history_message?(normalized_message) do
+      trace_messages
+    else
+      trace_messages ++ [normalized_message]
+    end
   end
 
   defp normalize_history_message(message, id_prefix) when is_map(message) do
@@ -1151,6 +1269,12 @@ defmodule FishMarketWeb.SessionLive do
       trace?: trace_message?(message, role)
     }
   end
+
+  defp skip_primary_history_message?(%{trace?: true, text: text})
+       when is_binary(text),
+       do: String.trim(text) == ""
+
+  defp skip_primary_history_message?(_message), do: false
 
   defp build_thinking_trace_messages(message, id_prefix) when is_map(message) do
     timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
@@ -1183,6 +1307,39 @@ defmodule FishMarketWeb.SessionLive do
 
   defp build_thinking_trace_messages(_message, _id_prefix), do: []
 
+  defp build_tool_call_trace_messages(message, id_prefix) when is_map(message) do
+    timestamp_label = format_timestamp_label(Message.timestamp_ms(message))
+    content = map_get(message, "content")
+
+    if is_list(content) do
+      content
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn {part, index} ->
+        case extract_tool_call_part(part) do
+          nil ->
+            []
+
+          %{name: name, arguments: arguments} ->
+            [
+              %{
+                id: "#{id_prefix}-toolcall-#{index}-#{message_hash(part)}",
+                role: "toolcall",
+                text: nil,
+                tool_name: name,
+                tool_argument_rows: tool_argument_rows(arguments),
+                timestamp_label: timestamp_label,
+                trace?: true
+              }
+            ]
+        end
+      end)
+    else
+      []
+    end
+  end
+
+  defp build_tool_call_trace_messages(_message, _id_prefix), do: []
+
   defp extract_thinking_text(part) when is_map(part) do
     type = map_string(part, "type")
 
@@ -1194,6 +1351,21 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp extract_thinking_text(_part), do: nil
+
+  defp extract_tool_call_part(part) when is_map(part) do
+    type = map_string(part, "type")
+
+    if is_binary(type) and String.downcase(type) in ["toolcall", "tool_call"] do
+      %{
+        name: map_string(part, "name") || "(unnamed tool)",
+        arguments: map_get(part, "arguments") || map_get(part, "args")
+      }
+    else
+      nil
+    end
+  end
+
+  defp extract_tool_call_part(_part), do: nil
 
   defp extract_message_thinking_text(message) when is_map(message) do
     content = map_get(message, "content")
@@ -1276,7 +1448,7 @@ defmodule FishMarketWeb.SessionLive do
         end
       ) ||
       if(allow_text_fallback?,
-        do: wrap_streaming_update(:merge, map_string(data, "delta")),
+        do: wrap_streaming_update(:append, map_string(data, "delta")),
         else: nil
       ) ||
       if(allow_text_fallback?,

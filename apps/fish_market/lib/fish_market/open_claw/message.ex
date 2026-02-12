@@ -32,7 +32,17 @@ defmodule FishMarket.OpenClaw.Message do
 
   @spec preview_text(term()) :: String.t()
   def preview_text(message) when is_map(message) do
-    extract_text(message) || summarize_non_text(message)
+    case extract_text(message) do
+      text when is_binary(text) ->
+        if String.trim(text) == "" do
+          summarize_non_text(message)
+        else
+          text
+        end
+
+      _ ->
+        summarize_non_text(message)
+    end
   end
 
   def preview_text(_), do: "(non-text message)"

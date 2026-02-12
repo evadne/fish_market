@@ -51,7 +51,7 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#session-streaming-thinking") == visible_after_toggle?
   end
 
-  test "deduplicates repeated fallback thinking deltas", %{conn: conn} do
+  test "appends repeated fallback thinking deltas", %{conn: conn} do
     session_key = "agent:main:fm-thinking-repeat"
     session_id = SessionRoute.encode(session_key)
     conn = put_connect_params(conn, %{"show_traces" => true})
@@ -69,8 +69,7 @@ defmodule FishMarketWeb.ApplicationLiveTest do
       {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X", "delta")}
     )
 
-    refute has_element?(view, "#session-streaming-thinking", "XX")
-    assert has_element?(view, "#session-streaming-thinking", "X")
+    assert has_element?(view, "#session-streaming-thinking", "XX")
   end
 
   test "appends repeated explicit thinking delta fields", %{conn: conn} do
@@ -94,12 +93,98 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#session-streaming-thinking", "XX")
   end
 
+  test "renders tool traces with argument table rows", %{conn: conn} do
+    session_key = "agent:main:fm-tool-trace"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => true})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(view.pid, {:openclaw_event, "agent", tool_payload(session_key, "run-1")})
+
+    assert has_element?(view, "#session-messages table")
+    assert has_element?(view, "#session-messages", "tool: exec")
+    assert has_element?(view, "#session-messages", "command")
+    assert has_element?(view, "#session-messages", "echo \"Hello\" && date")
+  end
+
+  test "keeps tool arguments during partial tool updates", %{conn: conn} do
+    session_key = "agent:main:fm-tool-trace-merge"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => true})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(view.pid, {:openclaw_event, "agent", tool_payload(session_key, "run-1")})
+
+    send(
+      view.pid,
+      {:openclaw_event, "agent",
+       tool_payload(session_key, "run-1", %{
+         "phase" => "result",
+         "args" => nil,
+         "result" => "done"
+       })}
+    )
+
+    assert has_element?(view, "#session-messages", "tool: exec")
+    assert has_element?(view, "#session-messages", "command")
+    assert has_element?(view, "#session-messages", "echo \"Hello\" && date")
+    assert has_element?(view, "#session-messages", "phase: result")
+  end
+
+  test "chat delta snapshots do not duplicate while tool events are in-flight", %{conn: conn} do
+    session_key = "agent:main:fm-chat-delta-snapshot"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => true})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(view.pid, {:openclaw_event, "chat", chat_payload(session_key, "run-1", "Hello")})
+    send(view.pid, {:openclaw_event, "agent", tool_payload(session_key, "run-1")})
+    send(view.pid, {:openclaw_event, "chat", chat_payload(session_key, "run-1", "Hello")})
+
+    refute has_element?(view, "#session-streaming-message", "HelloHello")
+    assert has_element?(view, "#session-streaming-message", "Hello")
+
+    send(view.pid, {:openclaw_event, "chat", chat_payload(session_key, "run-1", "Hello world")})
+    assert has_element?(view, "#session-streaming-message", "Hello world")
+  end
+
   defp thinking_payload(session_key, run_id, delta_text, key \\ "delta") do
     %{
       "sessionKey" => session_key,
       "stream" => "thinking",
       "runId" => run_id,
       "data" => %{key => delta_text}
+    }
+  end
+
+  defp tool_payload(session_key, run_id, data_overrides \\ %{}) do
+    data =
+      %{
+        "toolCallId" => "toolu_123",
+        "phase" => "update",
+        "name" => "exec",
+        "args" => %{"command" => "echo \"Hello\" && date"}
+      }
+      |> Map.merge(data_overrides)
+
+    %{
+      "sessionKey" => session_key,
+      "stream" => "tool",
+      "runId" => run_id,
+      "seq" => 1,
+      "data" => data
+    }
+  end
+
+  defp chat_payload(session_key, run_id, text) do
+    %{
+      "sessionKey" => session_key,
+      "runId" => run_id,
+      "state" => "delta",
+      "message" => %{
+        "role" => "assistant",
+        "content" => [%{"type" => "text", "text" => text}]
+      }
     }
   end
 end
