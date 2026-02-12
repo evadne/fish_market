@@ -1276,11 +1276,11 @@ defmodule FishMarketWeb.SessionLive do
         end
       ) ||
       if(allow_text_fallback?,
-        do: wrap_streaming_update(:append, map_string(data, "delta")),
+        do: wrap_streaming_update(:merge, map_string(data, "delta")),
         else: nil
       ) ||
       if(allow_text_fallback?,
-        do: wrap_streaming_update(:append, map_string(data, "text")),
+        do: wrap_streaming_update(:merge, map_string(data, "text")),
         else: nil
       )
   end

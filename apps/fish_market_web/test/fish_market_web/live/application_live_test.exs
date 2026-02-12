@@ -51,25 +51,55 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#session-streaming-thinking") == visible_after_toggle?
   end
 
-  test "appends repeated thinking deltas", %{conn: conn} do
+  test "deduplicates repeated fallback thinking deltas", %{conn: conn} do
     session_key = "agent:main:fm-thinking-repeat"
     session_id = SessionRoute.encode(session_key)
     conn = put_connect_params(conn, %{"show_traces" => true})
     {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
 
-    send(view.pid, {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X")})
+    send(
+      view.pid,
+      {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X", "delta")}
+    )
+
     assert has_element?(view, "#session-streaming-thinking", "X")
 
-    send(view.pid, {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X")})
+    send(
+      view.pid,
+      {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X", "delta")}
+    )
+
+    refute has_element?(view, "#session-streaming-thinking", "XX")
+    assert has_element?(view, "#session-streaming-thinking", "X")
+  end
+
+  test "appends repeated explicit thinking delta fields", %{conn: conn} do
+    session_key = "agent:main:fm-thinking-explicit-repeat"
+    session_id = SessionRoute.encode(session_key)
+    conn = put_connect_params(conn, %{"show_traces" => true})
+    {:ok, view, _html} = live(conn, ~p"/session/#{session_id}")
+
+    send(
+      view.pid,
+      {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X", "thinkingDelta")}
+    )
+
+    assert has_element?(view, "#session-streaming-thinking", "X")
+
+    send(
+      view.pid,
+      {:openclaw_event, "agent", thinking_payload(session_key, "run-1", "X", "thinkingDelta")}
+    )
+
     assert has_element?(view, "#session-streaming-thinking", "XX")
   end
 
-  defp thinking_payload(session_key, run_id, delta_text) do
+  defp thinking_payload(session_key, run_id, delta_text, key \\ "delta") do
     %{
       "sessionKey" => session_key,
       "stream" => "thinking",
       "runId" => run_id,
-      "data" => %{"delta" => delta_text}
+      "data" => %{key => delta_text}
     }
   end
 end
