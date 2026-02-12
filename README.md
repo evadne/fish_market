@@ -15,7 +15,22 @@ The application should be hosted behind Cloudflare Zero Trust, as there is no au
 
 ## TODO
 
-- Linking
 - Packaging via Mix Release and testing with systemd unit, etc
 - More Session Management stuff
 - Refinement
+
+## OpenClaw Upstream Bugs / Follow-ups
+
+These are issues identified while building Fish Market that appear to be on the OpenClaw side.
+
+- Thinking/reasoning stream is produced in embedded subscribe code, but not wired through gateway `chat.send`.
+  - OpenClaw references:
+    - `src/agents/pi-embedded-subscribe.handlers.messages.ts` (`emitReasoningStream(...)`)
+    - `src/agents/pi-embedded-subscribe.ts` (`onReasoningStream` callback usage)
+    - `src/gateway/server-methods/chat.ts` (`dispatchInboundMessage(...)` call in `chat.send` should wire `onReasoningStream`)
+- Gateway chat projection currently emits text-only `chat` deltas/finals. Reasoning stream does not reach webchat clients through the chat channel.
+  - OpenClaw reference:
+    - `src/gateway/server-chat.ts` (`emitChatDelta` / `emitChatFinal`)
+- OpenClaw web UI chat controller handles `chat` events for streaming text, but does not consume reasoning stream events as first-class chat traces.
+  - OpenClaw reference:
+    - `ui/src/ui/controllers/chat.ts`
