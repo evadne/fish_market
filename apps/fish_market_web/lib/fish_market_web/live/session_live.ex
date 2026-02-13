@@ -10,6 +10,12 @@ defmodule FishMarketWeb.SessionLive do
   @tool_trace_text_limit 12_000
   @think_levels ["", "off", "minimal", "low", "medium", "high"]
   @binary_think_levels ["", "off", "on"]
+  @verbose_level_options [
+    {"inherit", ""},
+    {"off (explicit)", "off"},
+    {"on", "on"},
+    {"full", "full"}
+  ]
   # NOTE: Temporary compatibility shim.
   # OpenClaw gateway `models.list` currently does not expose per-model thinking-level capabilities.
   # `sessions.patch` enforces xhigh support server-side, so we mirror known xhigh-capable refs here
@@ -67,8 +73,10 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:models_error, nil)
       |> assign(:model_select_options, [])
       |> assign(:thinking_select_options, [])
+      |> assign(:verbosity_select_options, @verbose_level_options)
       |> assign(:model_form, to_form(%{"model" => ""}, as: :session_model))
       |> assign(:thinking_form, to_form(%{"thinking_level" => ""}, as: :session_thinking))
+      |> assign(:verbosity_form, to_form(%{"verbose_level" => ""}, as: :session_verbosity))
       |> assign(:label_form, to_form(%{"label" => ""}, as: :session_label))
       |> assign(:deleting_session_keys, MapSet.new())
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
@@ -274,6 +282,36 @@ defmodule FishMarketWeb.SessionLive do
         {:error, reason} ->
           socket
           |> put_flash(:error, "Failed to change thinking level: #{format_reason(reason)}")
+          |> (&{:noreply, &1}).()
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event(
+        "change-session-verbosity",
+        %{"session_verbosity" => %{"verbose_level" => verbose_level}},
+        socket
+      )
+      when is_binary(verbose_level) do
+    session_key = socket.assigns.selected_session_key
+
+    if is_binary(session_key) do
+      verbose_patch = if verbose_level == "", do: nil, else: verbose_level
+
+      case OpenClaw.sessions_patch(session_key, %{"verboseLevel" => verbose_patch}) do
+        {:ok, _payload} ->
+          socket
+          |> optimistic_update_session_verbosity(session_key, verbose_patch)
+          |> sync_session_controls()
+          |> maybe_schedule_menu_refresh()
+          |> (&{:noreply, &1}).()
+
+        {:error, reason} ->
+          socket
+          |> put_flash(:error, "Failed to change verbosity: #{format_reason(reason)}")
           |> (&{:noreply, &1}).()
       end
     else
@@ -1457,6 +1495,7 @@ defmodule FishMarketWeb.SessionLive do
 
     selected_thinking = selected_session_thinking_level(selected_session)
     selected_thinking_display = thinking_level_display(selected_thinking, selected_provider)
+    selected_verbosity = selected_session_verbose_level(selected_session)
 
     socket
     |> assign(:selected_session, selected_session)
@@ -1472,10 +1511,18 @@ defmodule FishMarketWeb.SessionLive do
         selected_thinking_display
       )
     )
+    |> assign(
+      :verbosity_select_options,
+      build_verbosity_select_options(selected_verbosity)
+    )
     |> assign(:model_form, to_form(%{"model" => selected_model_ref}, as: :session_model))
     |> assign(
       :thinking_form,
       to_form(%{"thinking_level" => selected_thinking_display}, as: :session_thinking)
+    )
+    |> assign(
+      :verbosity_form,
+      to_form(%{"verbose_level" => selected_verbosity}, as: :session_verbosity)
     )
     |> assign(
       :label_form,
@@ -1541,6 +1588,12 @@ defmodule FishMarketWeb.SessionLive do
 
   defp selected_session_thinking_level(_session), do: ""
 
+  defp selected_session_verbose_level(session) when is_map(session) do
+    map_string(session, "verboseLevel") || ""
+  end
+
+  defp selected_session_verbose_level(_session), do: ""
+
   defp build_model_select_options(models_catalog, selected_model_ref)
        when is_list(models_catalog) do
     options =
@@ -1591,6 +1644,28 @@ defmodule FishMarketWeb.SessionLive do
   defp build_thinking_select_options(selected_provider, selected_model, _selected_value) do
     build_thinking_select_options(selected_provider, selected_model, "")
   end
+
+  defp build_verbosity_select_options(selected_value) when is_binary(selected_value) do
+    options =
+      if selected_value == "" or selected_value in Enum.map(@verbose_level_options, &elem(&1, 1)) do
+        @verbose_level_options
+      else
+        @verbose_level_options ++ [{selected_value, "#{selected_value} (custom)"}]
+      end
+
+    Enum.map(options, fn {label, value} ->
+      label =
+        if value == "" and label == "" do
+          "inherit"
+        else
+          label
+        end
+
+      {label, value}
+    end)
+  end
+
+  defp build_verbosity_select_options(_selected_value), do: @verbose_level_options
 
   defp thinking_level_options(provider, model) do
     cond do
@@ -1756,6 +1831,17 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp optimistic_update_session_label(socket, _session_key, _label), do: socket
+
+  defp optimistic_update_session_verbosity(socket, session_key, verbose_level)
+       when is_binary(session_key) do
+    update_session_entry(socket, session_key, fn session ->
+      session
+      |> Map.put("verboseLevel", verbose_level)
+      |> Map.put("updatedAt", System.system_time(:millisecond))
+    end)
+  end
+
+  defp optimistic_update_session_verbosity(socket, _session_key, _verbose_level), do: socket
 
   defp maybe_set_session_label(session, value) when is_map(session) and is_binary(value) do
     Map.put(session, "label", value)
