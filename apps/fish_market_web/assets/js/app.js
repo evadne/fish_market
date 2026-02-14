@@ -516,6 +516,23 @@ const SessionMenu = {
   },
 }
 
+const SessionLabelInput = {
+  mounted() {
+    this.handleKeydown = (event) => {
+      if (event.key !== "Enter") return
+      event.preventDefault()
+      if (this.el instanceof HTMLInputElement) {
+        this.el.blur()
+      }
+    }
+    this.el.addEventListener("keydown", this.handleKeydown)
+  },
+
+  destroyed() {
+    this.el.removeEventListener("keydown", this.handleKeydown)
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -529,6 +546,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     ChatComposer,
     SessionRelativeTimestamps,
     SessionMenu,
+    SessionLabelInput,
   },
 })
 

@@ -136,6 +136,7 @@
                             placeholder="Session label"
                             disabled={is_nil(@selected_session_key)}
                             phx-blur="change-session-label"
+                            phx-hook="SessionLabelInput"
                             class="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-5 text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                           />
                         </.form>
