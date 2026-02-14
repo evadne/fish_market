@@ -272,24 +272,149 @@ const AutoScrollMessages = {
   mounted() {
     this.bottomThreshold = 96
     this.shouldStickToBottom = true
+    this.anchorState = null
+    this.isResizing = false
+    this.resizeAnchor = null
+    this.resizeDebounceHandle = null
+
+    this.captureAnchorState = () => {
+      const messages = this.visibleMessageElements()
+      if (messages.length === 0) return null
+
+      const scrollTop = this.el.scrollTop
+      let anchor = messages[0]
+
+      for (const message of messages) {
+        if (message.offsetTop <= scrollTop) {
+          anchor = message
+        } else {
+          break
+        }
+      }
+
+      return {
+        id: anchor.id,
+        offset: scrollTop - anchor.offsetTop,
+      }
+    }
+
+    this.restoreAnchorState = (state) => {
+      if (!state || !state.id) return false
+      const messages = this.visibleMessageElements()
+      const message = messages.find((node) => node.id === state.id)
+
+      if (!(message instanceof HTMLElement)) return false
+
+      const maxScrollTop = Math.max(0, this.el.scrollHeight - this.el.clientHeight)
+      const nextScrollTop = Math.min(
+        Math.max(0, message.offsetTop + state.offset),
+        maxScrollTop
+      )
+
+      this.el.scrollTop = nextScrollTop
+      return true
+    }
+
+    this.visibleMessageElements = () => {
+      const stream = this.el.querySelector("#session-messages-stream")
+      if (!(stream instanceof HTMLElement)) return []
+      return Array.from(stream.querySelectorAll("article[id]"))
+    }
+
+    this.captureResizeAnchor = () => {
+      const state = this.captureAnchorState()
+      if (state) {
+        this.resizeAnchor = state
+      } else {
+        this.resizeAnchor = null
+      }
+    }
+
+    this.applyResizeAnchor = () => {
+      this.isResizing = false
+
+      const nextState = this.resizeAnchor || null
+      this.resizeAnchor = null
+
+      if (nextState && this.restoreAnchorState(nextState)) {
+        return
+      }
+
+      if (this.shouldStickToBottom || this.isNearBottom()) {
+        this.scrollToBottom()
+      } else if (this.anchorState) {
+        this.restoreAnchorState(this.anchorState)
+      }
+    }
+
+    this.scheduleResizeEnd = () => {
+      if (this.resizeDebounceHandle) {
+        window.clearTimeout(this.resizeDebounceHandle)
+      }
+
+      this.resizeDebounceHandle = window.setTimeout(() => {
+        this.resizeDebounceHandle = null
+        window.requestAnimationFrame(() => this.applyResizeAnchor())
+      }, 120)
+    }
+
     this.handleScroll = () => {
       this.shouldStickToBottom = this.isNearBottom()
+      if (!this.isResizing) {
+        this.anchorState = this.shouldStickToBottom ? null : this.captureAnchorState()
+      }
     }
+
+    this.handleResize = () => {
+      if (!this.isResizing) {
+        this.isResizing = true
+        this.shouldStickToBottom = this.isNearBottom()
+        this.captureResizeAnchor()
+      }
+      this.scheduleResizeEnd()
+    }
+
+    this.resizeObserver = null
+    if (typeof window.ResizeObserver === "function") {
+      this.resizeObserver = new ResizeObserver(this.handleResize)
+      this.resizeObserver.observe(this.el)
+    }
+
+    window.addEventListener("resize", this.handleResize)
     this.el.addEventListener("scroll", this.handleScroll, {passive: true})
     requestAnimationFrame(() => this.scrollToBottom())
   },
 
   beforeUpdate() {
-    this.shouldStickToBottom = this.isNearBottom()
+    if (!this.isResizing) {
+      this.shouldStickToBottom = this.isNearBottom()
+      this.anchorState = this.shouldStickToBottom ? null : this.captureAnchorState()
+    }
   },
 
   updated() {
-    if (!this.shouldStickToBottom) return
-    this.scrollToBottom()
+    if (this.isResizing) {
+      return
+    }
+
+    if (this.shouldStickToBottom) {
+      this.scrollToBottom()
+    } else if (this.anchorState) {
+      this.restoreAnchorState(this.anchorState)
+    }
   },
 
   destroyed() {
+    window.removeEventListener("resize", this.handleResize)
     this.el.removeEventListener("scroll", this.handleScroll)
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect()
+      this.resizeObserver = null
+    }
+    if (this.resizeDebounceHandle) {
+      window.clearTimeout(this.resizeDebounceHandle)
+      this.resizeDebounceHandle = null
+    }
   },
 
   isNearBottom() {
