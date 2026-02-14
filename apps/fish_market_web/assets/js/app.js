@@ -374,12 +374,6 @@ const AutoScrollMessages = {
       this.scheduleResizeEnd()
     }
 
-    this.resizeObserver = null
-    if (typeof window.ResizeObserver === "function") {
-      this.resizeObserver = new ResizeObserver(this.handleResize)
-      this.resizeObserver.observe(this.el)
-    }
-
     window.addEventListener("resize", this.handleResize)
     this.el.addEventListener("scroll", this.handleScroll, {passive: true})
     requestAnimationFrame(() => this.scrollToBottom())
@@ -407,10 +401,6 @@ const AutoScrollMessages = {
   destroyed() {
     window.removeEventListener("resize", this.handleResize)
     this.el.removeEventListener("scroll", this.handleScroll)
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect()
-      this.resizeObserver = null
-    }
     if (this.resizeDebounceHandle) {
       window.clearTimeout(this.resizeDebounceHandle)
       this.resizeDebounceHandle = null
