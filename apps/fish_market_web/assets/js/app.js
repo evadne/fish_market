@@ -490,6 +490,32 @@ const SessionRelativeTimestamps = {
   },
 }
 
+const SessionMenu = {
+  mounted() {
+    this.isOpen = this.el.open
+    this.handleToggle = () => {
+      this.isOpen = this.el.open
+    }
+    this.el.addEventListener("toggle", this.handleToggle)
+  },
+
+  updated() {
+    if (this.el instanceof HTMLDetailsElement) {
+      this.el.open = !!this.isOpen
+    }
+  },
+
+  destroyed() {
+    this.el.removeEventListener("toggle", this.handleToggle)
+  },
+
+  reconnected() {
+    if (this.el instanceof HTMLDetailsElement) {
+      this.el.open = !!this.isOpen
+    }
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -502,6 +528,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     AutoScrollMessages,
     ChatComposer,
     SessionRelativeTimestamps,
+    SessionMenu,
   },
 })
 
