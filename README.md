@@ -45,22 +45,9 @@ _build/prod/rel/fish_market/bin/fish_market stop     # stop
 _build/prod/rel/fish_market/bin/fish_market remote   # IEx remote shell
 ```
 
-### systemd (user-level)
+### systemd and Cloudflare Tunnel Deployment
 
-A unit file `fish-market.service` can be placed in `~/.config/systemd/user/`:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now fish-market.service
-journalctl --user -u fish-market.service -f
-```
-
-### Cloudflare Tunnel Deployment
-
-The app serves HTTP on `PORT` and expects Cloudflare Tunnel to terminate TLS.
-Set `HOST` to the public domain, `URL_PORT=443`. The existing `force_ssl`
-config with `rewrite_on: [:x_forwarded_proto]` handles HTTPS redirect correctly
-when CF sets the header.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide — systemd unit file, Cloudflare Tunnel config, updating, and troubleshooting.
 
 ## TODO
 
