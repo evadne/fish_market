@@ -13,9 +13,57 @@ The application should be run with the following envars:
 
 The application should be hosted behind Cloudflare Zero Trust, as there is no authentication support currently.
 
+## Production Release
+
+### Building
+
+```bash
+MIX_ENV=prod mix assets.deploy
+MIX_ENV=prod mix release fish_market --overwrite
+```
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SECRET_KEY_BASE` | **Yes** | — | Generate with `mix phx.gen.secret` |
+| `OPENCLAW_GATEWAY_URL` | **Yes** | — | WebSocket URL, e.g. `ws://127.0.0.1:18789` |
+| `OPENCLAW_GATEWAY_TOKEN` | One of token/password | — | Gateway auth token |
+| `OPENCLAW_GATEWAY_PASSWORD` | One of token/password | — | Gateway auth password |
+| `PORT` | No | `4000` | HTTP listen port |
+| `HOST` | No | `localhost` | Public hostname for URL generation |
+| `URL_PORT` | No | Same as `PORT` | Public-facing port (e.g. `443` behind reverse proxy) |
+| `URL_SCHEME` | No | Auto (`https` if URL_PORT=443) | URL scheme (`http` or `https`) |
+| `DNS_CLUSTER_QUERY` | No | — | DNS cluster discovery query |
+
+### Running
+
+```bash
+_build/prod/rel/fish_market/bin/fish_market start   # foreground
+_build/prod/rel/fish_market/bin/fish_market daemon   # background
+_build/prod/rel/fish_market/bin/fish_market stop     # stop
+_build/prod/rel/fish_market/bin/fish_market remote   # IEx remote shell
+```
+
+### systemd (user-level)
+
+A unit file `fish-market.service` can be placed in `~/.config/systemd/user/`:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now fish-market.service
+journalctl --user -u fish-market.service -f
+```
+
+### Cloudflare Tunnel Deployment
+
+The app serves HTTP on `PORT` and expects Cloudflare Tunnel to terminate TLS.
+Set `HOST` to the public domain, `URL_PORT=443`. The existing `force_ssl`
+config with `rewrite_on: [:x_forwarded_proto]` handles HTTPS redirect correctly
+when CF sets the header.
+
 ## TODO
 
-- Packaging via Mix Release and testing with systemd unit, etc
 - More Session Management stuff
 - Refinement
 

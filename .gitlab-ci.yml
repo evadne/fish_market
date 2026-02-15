@@ -1,0 +1,52 @@
+# Fish Market CI Pipeline
+# hexpm/elixir image format: ${ELIXIR}-erlang-${OTP}-debian-${VARIANT}
+
+variables:
+  MIX_ENV: test
+
+image: hexpm/elixir:1.19.5-erlang-28.3.1-debian-trixie-20260202-slim
+
+stages:
+  - test
+  - build
+
+before_script:
+  - apt-get update -qq && apt-get install -y -qq git
+
+# Cache mix deps and build artefacts between pipeline runs
+cache:
+  key:
+    files:
+      - mix.lock
+  paths:
+    - deps/
+    - _build/
+
+test:
+  stage: test
+  script:
+    - mix local.hex --force --if-missing
+    - mix local.rebar --force --if-missing
+    - mix deps.get
+    - mix compile --warnings-as-errors
+    - mix test
+
+release:
+  stage: build
+  variables:
+    MIX_ENV: prod
+  script:
+    - mix local.hex --force --if-missing
+    - mix local.rebar --force --if-missing
+    - mix deps.get --only prod
+    - mix assets.setup
+    - mix assets.deploy
+    - mix release fish_market --overwrite
+    - cd _build/prod/rel && tar czf fish_market.tar.gz fish_market/
+  artifacts:
+    paths:
+      - _build/prod/rel/fish_market.tar.gz
+    expire_in: 7 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
