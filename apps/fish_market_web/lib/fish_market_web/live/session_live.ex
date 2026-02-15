@@ -575,6 +575,19 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
+  def handle_info({:openclaw_gateway, :connect_error, payload}, socket) do
+    error_message =
+      payload
+      |> format_reason()
+
+    socket
+    |> assign(:history_error, error_message)
+    |> assign(:sessions_error, error_message)
+    |> sync_no_messages_state()
+    |> (&{:noreply, &1}).()
+  end
+
+  @impl true
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
     socket
     |> assign(:history_error, "Gateway disconnected")

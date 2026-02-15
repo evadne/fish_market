@@ -417,7 +417,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
         "mode" => @client_mode
       },
       "role" => "operator",
-      "scopes" => ["operator.admin"],
+      "scopes" => ["operator.admin", "operator.read", "operator.write"],
       "caps" => ["tool-events"],
       "commands" => [],
       "permissions" => %{},
