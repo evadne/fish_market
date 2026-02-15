@@ -11,8 +11,8 @@ defmodule FishMarketWeb.ApplicationLiveTest do
     assert has_element?(view, "#page-sidebar")
     assert has_element?(view, "#page-header")
     assert has_element?(view, "#session-content")
-    assert has_element?(view, "#session-model-select")
-    assert has_element?(view, "#session-thinking-select")
+    assert has_element?(view, "#session-menu-model-select")
+    assert has_element?(view, "#session-menu-thinking-select")
     assert has_element?(view, "textarea#chat-message-input")
   end
 

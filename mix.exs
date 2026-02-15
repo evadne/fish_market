@@ -8,7 +8,20 @@ defmodule FishMarket.Umbrella.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      releases: releases(),
       listeners: [Phoenix.CodeReloader]
+    ]
+  end
+
+  defp releases do
+    [
+      fish_market: [
+        applications: [
+          fish_market: :permanent,
+          fish_market_web: :permanent
+        ],
+        strip_beams: [keep: ["Docs"]]
+      ]
     ]
   end
 
