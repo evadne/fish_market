@@ -1589,7 +1589,7 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   defp selected_session_label(session) when is_map(session) do
-    Map.get(session, "label")
+    map_string(session, "label") || map_string(session, "displayName")
   end
 
   defp selected_session_label(_session), do: nil
@@ -1891,7 +1891,7 @@ defmodule FishMarketWeb.SessionLive do
 
   defp session_subtitle(selected_session, _loading?, _error, _pending_session_key)
        when is_map(selected_session) do
-    session_subtitle_label(selected_session)
+    session_key_value(selected_session) || ""
   end
 
   defp session_subtitle(nil, _loading?, _error, pending_session_key)
@@ -1900,15 +1900,6 @@ defmodule FishMarketWeb.SessionLive do
 
   defp session_subtitle(nil, _loading?, _error, _pending_session_key),
     do: "Pick a session from the menu to inspect history."
-
-  defp session_subtitle_label(selected_session) when is_map(selected_session) do
-    case map_string(selected_session, "displayName") do
-      nil -> map_string(selected_session, "key")
-      name -> name
-    end
-  end
-
-  defp session_subtitle_label(_selected_session), do: ""
 
   defp format_reason(%{"message" => message}) when is_binary(message), do: message
   defp format_reason(%{message: message}) when is_binary(message), do: message
