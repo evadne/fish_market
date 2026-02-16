@@ -575,12 +575,32 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
+  def handle_info({:openclaw_gateway, :pairing_required, _payload}, socket) do
+    {:noreply, push_navigate(socket, to: ~p"/gateway/pairing")}
+  end
+
+  @impl true
+  def handle_info({:openclaw_gateway, :socket_up, _payload}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:openclaw_gateway, :reconnecting, _payload}, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:openclaw_gateway, :disconnected, _payload}, socket) do
     socket
     |> assign(:history_error, "Gateway disconnected")
     |> assign(:sessions_error, "Gateway disconnected")
     |> sync_no_messages_state()
     |> (&{:noreply, &1}).()
+  end
+
+  @impl true
+  def handle_info({:openclaw_gateway, _event, _payload}, socket) do
+    {:noreply, socket}
   end
 
   @impl true

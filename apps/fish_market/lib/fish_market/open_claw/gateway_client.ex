@@ -342,6 +342,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
           {:ok, %{next_state | ready?: true, connect_sent?: true}}
         else
           error = Map.get(frame, "error", %{"message" => "connect failed"})
+          next_state = report_connect_error(next_state, error)
           OpenClaw.broadcast_gateway(:connect_error, error)
           {:disconnect, {:connect_rejected, error}, next_state}
         end
@@ -622,6 +623,42 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   defp map_integer(map, key) do
     case Map.get(map, key) do
       value when is_integer(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp report_connect_error(state, error) when is_map(error) do
+    if pairing_required_error?(error) do
+      OpenClaw.broadcast_gateway(:pairing_required, error)
+    end
+
+    state
+  end
+
+  defp report_connect_error(state, _error), do: state
+
+  defp pairing_required_error?(error) when is_map(error) do
+    code = map_string(error, "code")
+    message = map_string(error, "message")
+    code == "NOT_PAIRED" or pairing_required_message?(message)
+  end
+
+  defp pairing_required_error?(_), do: false
+
+  defp pairing_required_message?(nil), do: false
+
+  defp pairing_required_message?(message) when is_binary(message) do
+    normalized = String.downcase(message)
+
+    String.contains?(normalized, "pairing required") ||
+      String.contains?(normalized, "identity required")
+  end
+
+  defp pairing_required_message?(_), do: false
+
+  defp map_string(map, key) when is_map(map) do
+    case Map.get(map, key) do
+      value when is_binary(value) -> value
       _ -> nil
     end
   end
