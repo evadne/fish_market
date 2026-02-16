@@ -69,8 +69,6 @@
           :for={session <- @sessions}
           id={"menu-session-" <> session_dom_id(session_key(session))}
           patch={session_path(session_key(session))}
-          phx-click="menu-select-session"
-          phx-value-session_key={session_key(session)}
           class={[
             "group flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left text-sm font-medium",
             "active:border-gray-400 active:bg-gray-700/85 active:text-white",

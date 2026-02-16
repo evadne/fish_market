@@ -356,12 +356,6 @@ defmodule FishMarketWeb.SessionLive do
   end
 
   @impl true
-  def handle_event("menu-select-session", %{"session_key" => session_key}, socket)
-      when is_binary(session_key) and session_key != "" do
-    {:noreply, select_session(socket, session_key)}
-  end
-
-  @impl true
   def handle_event("delete-session", %{"session_key" => session_key}, socket)
       when is_binary(session_key) and session_key != "" do
     sessions_snapshot = socket.assigns.sessions
