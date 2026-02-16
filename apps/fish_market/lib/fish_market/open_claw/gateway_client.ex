@@ -89,7 +89,10 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   @impl true
   def handle_info(:send_connect, state) do
     if state.websocket && not state.connect_sent? do
-      connect_with_current_state(state)
+      case connect_with_current_state(state) do
+        {:ok, next_state} -> {:noreply, next_state}
+        {:error, reason, next_state} -> {:noreply, disconnect(next_state, reason)}
+      end
     else
       {:noreply, state}
     end
@@ -287,7 +290,9 @@ defmodule FishMarket.OpenClaw.GatewayClient do
         _ -> nil
       end
 
-    Logger.debug("[openclaw] received connect.challenge: nonce=\#{if is_binary(nonce), do: "present", else: "missing"}")
+    nonce_status = if is_binary(nonce), do: "present", else: "missing"
+
+    Logger.debug("[openclaw] received connect.challenge: nonce=#{nonce_status}")
 
     next_state = %{state | connect_nonce: nonce}
 
@@ -295,7 +300,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
       case connect_with_current_state(next_state) do
         {:ok, sent_state} -> {:ok, sent_state}
         {:error, reason, failed_state} ->
-          Logger.warning("[openclaw] failed to send connect with challenge nonce: \#{inspect(reason)}")
+          Logger.warning("[openclaw] failed to send connect with challenge nonce: #{inspect(reason)}")
           {:disconnect, {:connect_request_failed, reason}, failed_state}
       end
     else
@@ -405,7 +410,9 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   end
 
   defp connect_with_current_state(state) do
-    Logger.debug("[openclaw] sending connect request (nonce=\#{inspect(state.connect_nonce)} already_sent=\#{state.connect_sent?})")
+    Logger.debug(
+      "[openclaw] sending connect request (nonce=#{inspect(state.connect_nonce)} already_sent=#{state.connect_sent?})"
+    )
 
     case send_request_frame(state, "connect", connect_params(state), :connect) do
       {:ok, next_state} ->

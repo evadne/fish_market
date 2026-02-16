@@ -141,8 +141,10 @@ Route definition:
 ### Startup
 
 1. `GatewayClient` boots and connects to OpenClaw.
-2. `SessionLive` subscribes to required topics, loads sessions, and loads models.
-3. `SessionLive` resolves selected session from params and loads history if present.
+2. On websocket handshake, the client may receive `connect.challenge` with a device nonce.
+3. `GatewayClient` then retries `connect` with the nonce if present, which is required by newer OpenClaw gateways.
+4. `SessionLive` subscribes to required topics, loads sessions, and loads models.
+5. `SessionLive` resolves selected session from params and loads history if present.
 
 ### Session selection
 
