@@ -117,3 +117,14 @@ Disabled daisyUI configuration kept for reference:
 [data-phx-teleported-src] {
   display: contents;
 }
+
+/* Prevent iOS Safari auto-zoom on input focus for mobile editing.
+   16px is the threshold needed to avoid the viewport zoom behaviour. */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+    line-height: normal;
+  }
+}
