@@ -74,6 +74,7 @@ Environment=SECRET_KEY_BASE=<output of mix phx.gen.secret>
 # OpenClaw gateway connection
 Environment=OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 Environment=OPENCLAW_GATEWAY_PASSWORD=<your gateway password>
+Environment=XDG_CONFIG_HOME=%h/.config
 
 # Erlang cookie for distributed features (remote shell, etc.)
 Environment=RELEASE_COOKIE=fish_market_prod
@@ -159,7 +160,7 @@ systemctl --user restart fish-market.service
 |---|---|---|
 | Service fails immediately | Missing env var | Check `journalctl --user -u fish-market.service` for the missing variable name |
 | `Protocol 'inet_tcp': register/listen error` | Port already in use | Check `ss -tlnp \| grep 4848` and change `PORT` |
-| Gateway not connecting | Wrong URL or password | Verify `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_PASSWORD` match your gateway config |
+| Gateway not connecting | Wrong URL/password or identity path override | Verify `OPENCLAW_GATEWAY_URL`, auth credentials, and `XDG_CONFIG_HOME` if identity path is customized |
 | `remote` shell won't connect | Cookie mismatch | Ensure `RELEASE_COOKIE` matches between the running service and your shell |
 | Assets not loading (404) | Stale build | Re-run `mix assets.deploy` and `mix release` |
 
@@ -171,6 +172,7 @@ systemctl --user restart fish-market.service
 | `OPENCLAW_GATEWAY_URL` | **Yes** | — | WebSocket URL, e.g. `ws://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | One of token/password | — | Gateway auth token |
 | `OPENCLAW_GATEWAY_PASSWORD` | One of token/password | — | Gateway auth password |
+| `XDG_CONFIG_HOME` | No | `~/.config` | Controls where OpenClaw identity files are stored (`$XDG_CONFIG_HOME/fish-market/...`) |
 | `PORT` | No | `4000` | HTTP listen port |
 | `HOST` | No | `localhost` | Public hostname for URL generation |
 | `URL_PORT` | No | Same as `PORT` | Public-facing port (e.g. `443` behind reverse proxy) |

@@ -49,6 +49,11 @@ Configured in `config/runtime.exs` (except test):
 - At least one of:
   - `OPENCLAW_GATEWAY_TOKEN`
   - `OPENCLAW_GATEWAY_PASSWORD`
+- `XDG_CONFIG_HOME` (optional)
+
+`FishMarket` persists OpenClaw `device` identity at `$XDG_CONFIG_HOME/fish-market/identity/device.json` (or
+`~/.config/fish-market/identity/device.json` when `XDG_CONFIG_HOME` is not set). On connect, that
+identity is signed and sent as `device` so OpenClaw can authorize and retain scope/pairing state.
 
 ### Core API surface
 
