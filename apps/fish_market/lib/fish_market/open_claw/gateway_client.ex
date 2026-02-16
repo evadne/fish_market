@@ -89,13 +89,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   @impl true
   def handle_info(:send_connect, state) do
     if state.websocket && not state.connect_sent? do
-      case send_request_frame(state, "connect", connect_params(state), :connect) do
-        {:ok, next_state} ->
-          {:noreply, %{next_state | connect_sent?: true, connect_timer_ref: nil}}
-
-        {:error, reason, next_state} ->
-          {:noreply, disconnect(next_state, {:connect_request_failed, reason})}
-      end
+      connect_with_current_state(state)
     else
       {:noreply, state}
     end
@@ -293,15 +287,16 @@ defmodule FishMarket.OpenClaw.GatewayClient do
         _ -> nil
       end
 
+    Logger.debug("[openclaw] received connect.challenge: nonce=\#{if is_binary(nonce), do: "present", else: "missing"}")
+
     next_state = %{state | connect_nonce: nonce}
 
-    if next_state.websocket && not next_state.connect_sent? do
-      case send_request_frame(next_state, "connect", connect_params(next_state), :connect) do
-        {:ok, sent_state} ->
-          {:ok, %{sent_state | connect_sent?: true} |> cancel_connect_timer()}
-
-        {:error, reason, sent_state} ->
-          {:disconnect, {:connect_request_failed, reason}, sent_state}
+    if is_binary(nonce) and next_state.websocket do
+      case connect_with_current_state(next_state) do
+        {:ok, sent_state} -> {:ok, sent_state}
+        {:error, reason, failed_state} ->
+          Logger.warning("[openclaw] failed to send connect with challenge nonce: \#{inspect(reason)}")
+          {:disconnect, {:connect_request_failed, reason}, failed_state}
       end
     else
       {:ok, next_state}
@@ -406,6 +401,18 @@ defmodule FishMarket.OpenClaw.GatewayClient do
 
       {:error, websocket, reason} ->
         {:error, reason, %{state | websocket: websocket}}
+    end
+  end
+
+  defp connect_with_current_state(state) do
+    Logger.debug("[openclaw] sending connect request (nonce=\#{inspect(state.connect_nonce)} already_sent=\#{state.connect_sent?})")
+
+    case send_request_frame(state, "connect", connect_params(state), :connect) do
+      {:ok, next_state} ->
+        {:ok, %{next_state | connect_sent?: true} |> cancel_connect_timer()}
+
+      {:error, reason, next_state} ->
+        {:error, {:connect_request_failed, reason}, next_state}
     end
   end
 
