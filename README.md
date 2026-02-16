@@ -11,7 +11,7 @@ The application should be run with the following envars:
 - `OPENCLAW_GATEWAY_URL`
 - `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`
 
-Tested against OpenClaw version: `2026.2.15`.
+Tested against OpenClaw version: `2026.2.14`.
 
 OpenClaw now requires device pairing in many setups. On first connect, Fish Market may be placed on the pairing screen at `/gateway/pairing` if the device is not yet approved.
 
