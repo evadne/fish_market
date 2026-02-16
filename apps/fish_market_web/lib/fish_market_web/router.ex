@@ -17,6 +17,7 @@ defmodule FishMarketWeb.Router do
   scope "/", FishMarketWeb do
     pipe_through :browser
 
+    live "/gateway/pairing", GatewayPairingLive, :index
     live "/", SessionLive, :index
     live "/session/:session_id", SessionLive, :index
   end

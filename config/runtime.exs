@@ -20,6 +20,7 @@ if config_env() != :test do
 
   gateway_token = System.get_env("OPENCLAW_GATEWAY_TOKEN")
   gateway_password = System.get_env("OPENCLAW_GATEWAY_PASSWORD")
+  xdg_config_home = System.get_env("XDG_CONFIG_HOME")
 
   if is_nil(gateway_token) and is_nil(gateway_password) do
     raise """
@@ -31,7 +32,8 @@ if config_env() != :test do
   config :fish_market, FishMarket.OpenClaw,
     gateway_url: gateway_url,
     gateway_token: gateway_token,
-    gateway_password: gateway_password
+    gateway_password: gateway_password,
+    xdg_config_home: xdg_config_home
 end
 
 if config_env() == :prod do

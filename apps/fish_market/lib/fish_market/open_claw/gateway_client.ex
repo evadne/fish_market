@@ -8,6 +8,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   require Logger
 
   alias FishMarket.OpenClaw
+  alias FishMarket.OpenClaw.DeviceIdentity
 
   @connect_delay_ms 750
   @reconnect_initial_ms 1_000
@@ -15,6 +16,11 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   @protocol_version 3
   @client_id "gateway-client"
   @client_mode "backend"
+  @scopes [
+    "operator.admin",
+    "operator.approvals",
+    "operator.pairing"
+  ]
 
   @type state :: map()
 
@@ -40,6 +46,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
       client_platform: config.client_platform,
       locale: config.locale,
       user_agent: config.user_agent,
+      device_identity: config.device_identity,
       conn: nil,
       request_ref: nil,
       websocket: nil,
@@ -335,6 +342,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
           {:ok, %{next_state | ready?: true, connect_sent?: true}}
         else
           error = Map.get(frame, "error", %{"message" => "connect failed"})
+          next_state = report_connect_error(next_state, error)
           OpenClaw.broadcast_gateway(:connect_error, error)
           {:disconnect, {:connect_rejected, error}, next_state}
         end
@@ -407,6 +415,8 @@ defmodule FishMarket.OpenClaw.GatewayClient do
       |> maybe_put("token", state.token)
       |> maybe_put("password", state.password)
 
+    device = build_device_identity(state)
+
     %{
       "minProtocol" => @protocol_version,
       "maxProtocol" => @protocol_version,
@@ -417,16 +427,31 @@ defmodule FishMarket.OpenClaw.GatewayClient do
         "mode" => @client_mode
       },
       "role" => "operator",
-      "scopes" => ["operator.admin"],
+      "scopes" => @scopes,
       "caps" => ["tool-events"],
       "commands" => [],
       "permissions" => %{},
       "auth" => if(map_size(auth) == 0, do: nil, else: auth),
+      "device" => device,
       "locale" => state.locale,
       "userAgent" => state.user_agent
     }
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
+  end
+
+  defp build_device_identity(state) do
+    identity = state.device_identity
+
+    if identity do
+      DeviceIdentity.build_connect_device(identity, %{
+        role: "operator",
+        scopes: @scopes,
+        token: state.token,
+        nonce: state.connect_nonce,
+        signed_at: System.system_time(:millisecond)
+      })
+    end
   end
 
   defp schedule_connect_request(state) do
@@ -555,6 +580,7 @@ defmodule FishMarket.OpenClaw.GatewayClient do
       uri: %{uri | port: port},
       token: token,
       password: password,
+      device_identity: DeviceIdentity.load_or_create_identity(config[:xdg_config_home]),
       ws_upgrade_headers: ws_upgrade_headers(),
       client_version: fish_market_version(),
       client_platform: client_platform(),
@@ -597,6 +623,42 @@ defmodule FishMarket.OpenClaw.GatewayClient do
   defp map_integer(map, key) do
     case Map.get(map, key) do
       value when is_integer(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp report_connect_error(state, error) when is_map(error) do
+    if pairing_required_error?(error) do
+      OpenClaw.broadcast_gateway(:pairing_required, error)
+    end
+
+    state
+  end
+
+  defp report_connect_error(state, _error), do: state
+
+  defp pairing_required_error?(error) when is_map(error) do
+    code = map_string(error, "code")
+    message = map_string(error, "message")
+    code == "NOT_PAIRED" or pairing_required_message?(message)
+  end
+
+  defp pairing_required_error?(_), do: false
+
+  defp pairing_required_message?(nil), do: false
+
+  defp pairing_required_message?(message) when is_binary(message) do
+    normalized = String.downcase(message)
+
+    String.contains?(normalized, "pairing required") ||
+      String.contains?(normalized, "identity required")
+  end
+
+  defp pairing_required_message?(_), do: false
+
+  defp map_string(map, key) when is_map(map) do
+    case Map.get(map, key) do
+      value when is_binary(value) -> value
       _ -> nil
     end
   end

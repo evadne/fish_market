@@ -11,6 +11,13 @@ The application should be run with the following envars:
 - `OPENCLAW_GATEWAY_URL`
 - `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`
 
+Tested against OpenClaw version: `2026.2.15`.
+
+OpenClaw now requires device pairing in many setups. On first connect, Fish Market may be placed on the pairing screen at `/gateway/pairing` if the device is not yet approved.
+
+- Approve the pairing request in OpenClaw Control UI, then return to Fish Market.
+- Alternatively, use `openclaw tui` and ask your agent to approve pending pairing requests.
+
 The application should be hosted behind Cloudflare Zero Trust, as there is no authentication support currently.
 
 ## Production Release
