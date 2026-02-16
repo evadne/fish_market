@@ -80,6 +80,7 @@
                   class="relative -ml-3 group"
                   data-session-menu
                   data-session-menu-trigger
+                  data-session-menu-loaded={@session_menu_loaded?}
                   phx-hook="SessionMenu"
                 >
                   <summary
@@ -116,7 +117,7 @@
                   </summary>
 
                   <div class="absolute left-0 top-full z-30 mt-1 min-w-[22rem] w-[22rem] max-w-[30rem] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                    <div class="space-y-2 px-3 py-2 dark:border-gray-700">
+                    <div class="space-y-2 px-3 py-2">
                       <div class="space-y-1">
                         <label
                           for="session-menu-label-input"
@@ -160,8 +161,11 @@
                             id="session-menu-model-select"
                             type="select"
                             options={@model_select_options}
-                            disabled={is_nil(@selected_session_key) or @models_loading?}
-                            class="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-5 text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                            disabled={is_nil(@selected_session_key) or !@models_catalog_loaded?}
+                            class={[
+                              "block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-5 text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100",
+                              !@models_catalog_loaded? && "opacity-75"
+                            ]}
                           />
                         </.form>
                       </div>
@@ -214,6 +218,7 @@
                         </.form>
                       </div>
                     </div>
+
                     <div class="p-3 pb-4">
                       <button
                         type="button"

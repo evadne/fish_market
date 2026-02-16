@@ -78,6 +78,7 @@ defmodule FishMarketWeb.SessionLive do
       |> assign(:thinking_form, to_form(%{"thinking_level" => ""}, as: :session_thinking))
       |> assign(:verbosity_form, to_form(%{"verbose_level" => ""}, as: :session_verbosity))
       |> assign(:label_form, to_form(%{"label" => ""}, as: :session_label))
+      |> assign(:session_menu_loaded?, false)
       |> assign(:deleting_session_keys, MapSet.new())
       |> assign(:form, to_form(%{"message" => ""}, as: :chat))
       |> stream(:messages, [])
@@ -227,6 +228,18 @@ defmodule FishMarketWeb.SessionLive do
     |> push_event("set-show-traces", %{enabled: show_traces?})
     |> ensure_session_verbose_for_traces(show_traces?, selected_session_key)
     |> (&{:noreply, &1}).()
+  end
+
+  @impl true
+  def handle_event("session-menu-open", _params, socket) do
+    if socket.assigns.session_menu_loaded? do
+      {:noreply, socket}
+    else
+      socket
+      |> assign(:session_menu_loaded?, true)
+      |> sync_session_controls()
+      |> (&{:noreply, &1}).()
+    end
   end
 
   @impl true
@@ -649,6 +662,7 @@ defmodule FishMarketWeb.SessionLive do
 
       socket
       |> assign(:selected_session_key, session_key)
+      |> assign(:session_menu_loaded?, false)
       |> assign(:send_error, nil)
       |> assign(:can_send_message?, false)
       |> assign(:history_messages, [])
@@ -666,20 +680,21 @@ defmodule FishMarketWeb.SessionLive do
 
   defp clear_session_selection(socket) do
     socket
-    |> assign(:selected_session_key, nil)
-    |> assign(:send_error, nil)
-    |> assign(:can_send_message?, false)
-    |> assign(:history_messages, [])
-    |> assign(:history_request_id, nil)
-    |> assign(:history_loading?, false)
-    |> assign(:history_error, nil)
-    |> reset_streaming_state()
-    |> assign(:pending_session_key, nil)
-    |> assign(:queued_messages, [])
-    |> assign(:form, to_form(%{"message" => ""}, as: :chat))
-    |> stream(:messages, [], reset: true)
-    |> sync_no_messages_state()
-    |> sync_session_controls()
+      |> assign(:session_menu_loaded?, false)
+      |> assign(:selected_session_key, nil)
+      |> assign(:send_error, nil)
+      |> assign(:can_send_message?, false)
+      |> assign(:history_messages, [])
+      |> assign(:history_request_id, nil)
+      |> assign(:history_loading?, false)
+      |> assign(:history_error, nil)
+      |> reset_streaming_state()
+      |> assign(:pending_session_key, nil)
+      |> assign(:queued_messages, [])
+      |> assign(:form, to_form(%{"message" => ""}, as: :chat))
+      |> stream(:messages, [], reset: true)
+      |> sync_no_messages_state()
+      |> sync_session_controls()
   end
 
   defp restore_deleted_session_on_error(
@@ -1497,6 +1512,7 @@ defmodule FishMarketWeb.SessionLive do
   defp sync_session_controls(socket) do
     selected_session = selected_session(socket)
     selected_model_ref = selected_session_model_ref(selected_session) || ""
+    menu_loading = not (socket.assigns.session_menu_loaded? and socket.assigns.models_catalog_loaded?)
 
     selected_provider =
       model_provider_from_ref(selected_model_ref) ||
@@ -1511,10 +1527,15 @@ defmodule FishMarketWeb.SessionLive do
     selected_verbosity = selected_session_verbose_level(selected_session)
 
     socket
-    |> assign(:selected_session, selected_session)
-    |> assign(
+      |> assign(:selected_session, selected_session)
+      |> assign(
       :model_select_options,
-      build_model_select_options(socket.assigns.models_catalog, selected_model_ref)
+      maybe_model_select_options(
+        socket.assigns.models_catalog,
+        selected_model_ref,
+        menu_loading,
+        socket.assigns.models_catalog_loaded?
+      )
     )
     |> assign(
       :thinking_select_options,
@@ -1542,6 +1563,21 @@ defmodule FishMarketWeb.SessionLive do
       to_form(%{"label" => selected_session_label(selected_session) || ""}, as: :session_label)
     )
   end
+
+  defp maybe_model_select_options(_models_catalog, selected_model_ref, true, _models_catalog_loaded?) do
+    [{selected_model_ref_label(selected_model_ref), selected_model_ref}]
+  end
+
+  defp maybe_model_select_options(models_catalog, selected_model_ref, false, true) do
+    build_model_select_options(models_catalog, selected_model_ref)
+  end
+
+  defp maybe_model_select_options(_models_catalog, selected_model_ref, false, false) do
+    [{selected_model_ref_label(selected_model_ref), selected_model_ref}]
+  end
+
+  defp selected_model_ref_label(""), do: "inherit"
+  defp selected_model_ref_label(value), do: value
 
   defp selected_session(socket) do
     selected_session_key = socket.assigns.selected_session_key

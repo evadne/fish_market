@@ -608,16 +608,22 @@ const SessionRelativeTimestamps = {
 const SessionMenu = {
   mounted() {
     this.isOpen = this.el.open
+    this.menuLoaded = this.el.dataset.sessionMenuLoaded === "true"
     this.handleToggle = () => {
-      this.isOpen = this.el.open
+      const open = !!this.el.open
+      this.isOpen = open
+
+      if (open && !this.menuLoaded) {
+        this.menuLoaded = true
+        this.pushEvent("session-menu-open")
+      }
     }
     this.el.addEventListener("toggle", this.handleToggle)
   },
 
   updated() {
-    if (this.el instanceof HTMLDetailsElement) {
-      this.el.open = !!this.isOpen
-    }
+    this.menuLoaded = this.el.dataset.sessionMenuLoaded === "true"
+    this.el.open = !!this.isOpen
   },
 
   destroyed() {
@@ -625,9 +631,8 @@ const SessionMenu = {
   },
 
   reconnected() {
-    if (this.el instanceof HTMLDetailsElement) {
-      this.el.open = !!this.isOpen
-    }
+    this.menuLoaded = this.el.dataset.sessionMenuLoaded === "true"
+    this.el.open = !!this.isOpen
   },
 }
 
