@@ -54,27 +54,40 @@ defmodule FishMarketWeb.CoreComponents do
     <div
       :if={msg = render_slot(@inner_block) || Phoenix.Flash.get(@flash, @kind)}
       id={@id}
-      phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
-      class="toast toast-top toast-end z-50"
+      aria-live={if @kind == :error, do: "assertive", else: "polite"}
+      class={[
+        "pointer-events-auto flex items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white p-5 text-sm shadow-md shadow-gray-200/50 dark:border-gray-700/75 dark:bg-gray-800 dark:shadow-gray-950/50",
+        @kind == :info && "text-sky-800 dark:text-sky-100",
+        @kind == :error && "text-rose-800 dark:text-rose-100"
+      ]}
       {@rest}
     >
       <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
-        @kind == :info && "alert-info",
-        @kind == :error && "alert-error"
+        "flex size-11 flex-none items-center justify-center rounded-xl",
+        @kind == :info && "bg-sky-100 text-sky-700 dark:bg-sky-600/25 dark:text-sky-100",
+        @kind == :error && "bg-rose-100 text-rose-700 dark:bg-rose-600/25 dark:text-rose-100"
       ]}>
-        <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
-        <div>
-          <p :if={@title} class="font-semibold">{@title}</p>
-          <p>{msg}</p>
-        </div>
-        <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
-        </button>
+        <.icon :if={@kind == :info} name="hero-information-circle" class="size-4" />
+        <.icon :if={@kind == :error} name="hero-x-mark" class="size-4" />
       </div>
+
+      <div class="flex grow flex-col gap-0.5">
+        <h5 :if={@title} class="font-semibold">
+          {@title}
+        </h5>
+        <p class="leading-5 text-wrap text-slate-500 dark:text-gray-300">{msg}</p>
+      </div>
+
+      <button
+        type="button"
+        phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
+        class="flex-none text-gray-500 hover:text-gray-700 active:text-gray-500 dark:text-gray-400 dark:hover:text-gray-300 dark:active:text-gray-400"
+        aria-label={gettext("Close notification")}
+      >
+        <.icon name="hero-x-mark" class="size-5" />
+        <span class="sr-only">Close Notification</span>
+      </button>
     </div>
     """
   end
